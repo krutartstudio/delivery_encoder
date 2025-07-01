@@ -179,20 +179,26 @@ impl eframe::App for DeliveryEncoderApp {
         // Handle progress updates
         while let Ok((progress, message)) = self.progress_receiver.try_recv() {
             if progress < 0.0 {
+                // Error message
                 self.status = message.clone();
                 self.encoding = false;
                 self.current_frame = message;
             } else if progress >= 100.0 {
+                // Completion message
                 self.progress = 100.0;
                 self.status = "Done!".to_string();
                 self.encoding = false;
                 self.eta = "00:00".to_string();
+                self.current_frame = message;
             } else {
-                if let Some((percent, eta)) = message.split_once('|') {
+                // Regular progress update
+                if message.starts_with("FRAME:") {
+                    // Frame status update
+                    self.current_frame = message[6..].to_string();
+                } else if let Some((percent, eta)) = message.split_once('|') {
+                    // Progress percentage and ETA update
                     self.progress = percent.parse().unwrap_or(self.progress);
                     self.eta = eta.to_string();
-                } else {
-                    self.current_frame = message;
                 }
             }
         }
@@ -339,7 +345,7 @@ fn run_encoding(
     let _ = progress_sender.send((
         0.0,
         format!(
-            "Frame: {:04} | Processing | Res: {}x{} | Start: {:04} | ETA: --:--",
+            "FRAME:Frame: {:04} | Processing | Res: {}x{} | Start: {:04} | ETA: --:--",
             start_frame, target_width, target_height, start_frame
         ),
     ));
@@ -354,7 +360,7 @@ fn run_encoding(
             child.kill()?;
             let _ = progress_sender.send((
                 -2.0,
-                format!("Frame: {:04} | Paused | ETA: {}", last_frame, last_eta),
+                format!("FRAME:Frame: {:04} | Paused | ETA: {}", last_frame, last_eta),
             ));
             return Ok(());
         }
@@ -398,17 +404,17 @@ fn run_encoding(
             // Create detailed single-line log with frame and ETA
             let detailed_log = if config.resolution != Resolution::K6 {
                 format!(
-                    "Frame: {:04} | Progress: {:.1}% | Res: {}x{} | ETA: {}",
+                    "FRAME:Frame: {:04} | Progress: {:.1}% | Res: {}x{} | ETA: {}",
                     current_frame, progress_value, target_width, target_height, last_eta
                 )
             } else {
                 format!(
-                    "Frame: {:04} | Progress: {:.1}% | Res: {}x{} (orig) | ETA: {}",
+                    "FRAME:Frame: {:04} | Progress: {:.1}% | Res: {}x{} (orig) | ETA: {}",
                     current_frame, progress_value, width, height, last_eta
                 )
             };
             
-            // Send detailed log update
+            // Send detailed log update with FRAME: prefix
             let _ = progress_sender.send((progress_value, detailed_log));
             
             // Send progress update separately
@@ -427,12 +433,12 @@ fn run_encoding(
         // Final detailed status with frame and ETA
         let detailed_log = if config.resolution != Resolution::K6 {
             format!(
-                "Frame: {:04} | Progress: 100.0% | Res: {}x{} | ETA: 00:00",
+                "FRAME:Frame: {:04} | Progress: 100.0% | Res: {}x{} | ETA: 00:00",
                 last_frame, target_width, target_height
             )
         } else {
             format!(
-                "Frame: {:04} | Progress: 100.0% | Res: {}x{} (orig) | ETA: 00:00",
+                "FRAME:Frame: {:04} | Progress: 100.0% | Res: {}x{} (orig) | ETA: 00:00",
                 last_frame, width, height
             )
         };
