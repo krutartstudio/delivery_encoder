@@ -10,8 +10,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+// Add fs2 crate for disk space checking
+use fs2::available_space;
+
 // Resolution options
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Resolution {
     K2,
     K4,
@@ -53,7 +59,6 @@ struct DeliveryEncoderApp {
     output_dir: PathBuf,
     status: String,
     progress: f32,
-    eta: String,
     encoding: bool,
     worker_thread: Option<thread::JoinHandle<()>>,
     progress_receiver: Receiver<(f32, String)>,
@@ -72,7 +77,6 @@ impl DeliveryEncoderApp {
             output_dir: PathBuf::from("output"),
             status: "Ready".to_string(),
             progress: 0.0,
-            eta: "--:--".to_string(),
             encoding: false,
             worker_thread: None,
             progress_receiver: mpsc::channel().1,
@@ -126,10 +130,24 @@ impl DeliveryEncoderApp {
             return;
         }
 
+        // NEW: Storage availability check
+        match self.check_storage_availability() {
+            Ok(required_gb) => {
+                self.status = format!(
+                    "Starting... | Free space available: {:.2}GB required",
+                    required_gb
+                );
+            }
+            Err(e) => {
+                self.status = format!("Storage error: {}", e);
+                self.current_frame = format!("Frame: 0000 | {} | ETA: --:--", self.status);
+                return;
+            }
+        }
+
         self.status = "Encoding...".to_string();
         self.encoding = true;
         self.progress = 0.0;
-        self.eta = "--:--".to_string();
         self.current_frame = "Frame: 0000 | Starting FFmpeg | ETA: --:--".to_string();
 
         let (progress_sender, progress_receiver) = mpsc::channel();
@@ -156,12 +174,107 @@ impl DeliveryEncoderApp {
         }));
     }
 
+    // NEW: Storage check function
+    fn check_storage_availability(&self) -> Result<f64> {
+        // Get target resolution dimensions
+        let (width, height) = match self.resolution {
+            Resolution::K2 => (2048, 2048),
+            Resolution::K4 => (4096, 4096),
+            Resolution::K6 => {
+                get_resolution(&PathBuf::from("assets/video.mov"), &self.ffprobe_path)?
+            }
+        };
+
+        // Calculate bytes per frame (conservative estimate for PNG)
+        let bytes_per_frame = (width as u64) * (height as u64) * 4; // 4 bytes per pixel (RGBA)
+
+        // Get video duration and frame rate to estimate total frames
+        let duration = get_duration(&PathBuf::from("assets/video.mov"), &self.ffprobe_path)?;
+        let frame_rate = get_frame_rate(&PathBuf::from("assets/video.mov"), &self.ffprobe_path)?;
+        let total_frames = (duration * frame_rate).ceil() as u64;
+
+        // Calculate total required space with 20% buffer
+        let required_bytes = bytes_per_frame * total_frames;
+        let required_bytes_with_buffer = (required_bytes as f64 * 1.2) as u64;
+
+        // Get available space
+        let free_space = available_space(&self.output_dir)?;
+
+        // Check if sufficient space is available
+        if free_space < required_bytes_with_buffer {
+            let required_gb = required_bytes_with_buffer as f64 / (1024.0 * 1024.0 * 1024.0);
+            let available_gb = free_space as f64 / (1024.0 * 1024.0 * 1024.0);
+            return Err(anyhow!(
+                "Insufficient storage: {:.2}GB required, {:.2}GB available",
+                required_gb,
+                available_gb
+            ));
+        }
+
+        Ok(required_bytes_with_buffer as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+
     fn cancel_encoding(&mut self) {
         if let Some(sender) = self.cancel_sender.take() {
             let _ = sender.send(());
         }
         self.encoding = false;
         self.status = "Paused".to_string();
+    }
+}
+
+// NEW: Frame rate detection function
+fn get_frame_rate(input: &Path, ffprobe_path: &Path) -> Result<f32> {
+    let input_str = input
+        .to_str()
+        .ok_or_else(|| anyhow!("Invalid video path"))?;
+
+    let mut command = Command::new(ffprobe_path);
+    command
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=r_frame_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            input_str,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let output = {
+        #[cfg(windows)]
+        {
+            command.creation_flags(0x08000000).output()?
+        }
+        #[cfg(not(windows))]
+        {
+            command.output()?
+        }
+    };
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "FFprobe failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let rate_str = String::from_utf8(output.stdout)?;
+    let rate_str = rate_str.trim();
+
+    // Handle fractional frame rates (e.g., "30000/1001")
+    if let Some((num, den)) = rate_str.split_once('/') {
+        let numerator: f32 = num.parse()?;
+        let denominator: f32 = den.parse()?;
+        Ok(numerator / denominator)
+    } else {
+        rate_str
+            .parse::<f32>()
+            .map_err(|e| anyhow!("Frame rate parse error: {}", e))
     }
 }
 
@@ -188,17 +301,15 @@ impl eframe::App for DeliveryEncoderApp {
                 self.progress = 100.0;
                 self.status = "Done!".to_string();
                 self.encoding = false;
-                self.eta = "00:00".to_string();
                 self.current_frame = message;
             } else {
-                // Regular progress update
+                // Update progress percentage regardless of message type
+                self.progress = progress;
+
+                // Then check if it's a frame status update
                 if message.starts_with("FRAME:") {
                     // Frame status update
                     self.current_frame = message[6..].to_string();
-                } else if let Some((percent, eta)) = message.split_once('|') {
-                    // Progress percentage and ETA update
-                    self.progress = percent.parse().unwrap_or(self.progress);
-                    self.eta = eta.to_string();
                 }
             }
         }
@@ -212,57 +323,79 @@ impl eframe::App for DeliveryEncoderApp {
             }
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // Resolution selection
-            ui.horizontal(|ui| {
-                ui.label("Resolution:");
-                ui.radio_value(&mut self.resolution, Resolution::K2, Resolution::K2.as_str());
-                ui.radio_value(&mut self.resolution, Resolution::K4, Resolution::K4.as_str());
-                ui.radio_value(&mut self.resolution, Resolution::K6, Resolution::K6.as_str());
-            });
+        // Create a frame with padding around the entire UI
+        egui::CentralPanel::default()
+            .frame(egui::Frame {
+                inner_margin: egui::Margin::symmetric(20.0, 20.0),
+                fill: ctx.style().visuals.panel_fill,
+                ..Default::default()
+            })
+            .show(ctx, |ui| {
+                // Resolution selection - changed to dropdown
+                ui.horizontal(|ui| {
+                    ui.label("Resolution:");
+                    egui::ComboBox::from_id_source("resolution_combo")
+                        .selected_text(self.resolution.as_str())
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.resolution,
+                                Resolution::K2,
+                                Resolution::K2.as_str(),
+                            );
+                            ui.selectable_value(
+                                &mut self.resolution,
+                                Resolution::K4,
+                                Resolution::K4.as_str(),
+                            );
+                            ui.selectable_value(
+                                &mut self.resolution,
+                                Resolution::K6,
+                                Resolution::K6.as_str(),
+                            );
+                        });
+                });
 
-            ui.separator();
+                ui.separator();
 
-            // Output Directory
-            ui.horizontal(|ui| {
-                ui.label("Output Directory:");
-                if ui.button("📂 Browse...").clicked() {
-                    if let Some(path) = FileDialog::new().pick_folder() {
-                        self.output_dir = path;
+                // Output Directory
+                ui.horizontal(|ui| {
+                    ui.label("Output Directory:");
+                    if ui.button("📂 Browse...").clicked() {
+                        if let Some(path) = FileDialog::new().pick_folder() {
+                            self.output_dir = path;
+                        }
                     }
-                }
-                ui.label(self.output_dir.display().to_string());
-            });
+                    ui.label(self.output_dir.display().to_string());
+                });
 
-            ui.separator();
+                ui.separator();
 
-            // Detailed progress information
-            ui.label(&self.current_frame);
-            
-            // Progress bar with percentage
-            ui.add(
-                egui::ProgressBar::new(self.progress / 100.0)
-                    .text(format!("{:.1}%", self.progress)),
-            );
-            ui.label(format!("ETA: {}", self.eta));
+                // Detailed progress information (includes ETA)
+                ui.label(&self.current_frame);
 
-            ui.add_space(10.0);
+                // Progress bar with percentage
+                ui.add(
+                    egui::ProgressBar::new(self.progress / 100.0)
+                        .text(format!("{:.1}%", self.progress)),
+                );
 
-            // Action buttons
-            ui.horizontal(|ui| {
-                if self.encoding {
-                    if ui.button("⛔ Stop").clicked() {
-                        self.cancel_encoding();
+                ui.add_space(10.0);
+
+                // Action buttons
+                ui.horizontal(|ui| {
+                    if self.encoding {
+                        if ui.button("⛔ Stop").clicked() {
+                            self.cancel_encoding();
+                        }
+                    } else if ui.button("▶ Start Encoding").clicked() {
+                        self.start_encoding();
                     }
-                } else if ui.button("▶ Start Encoding").clicked() {
-                    self.start_encoding();
-                }
 
-                if ui.button("📂 Open Output Folder").clicked() {
-                    open_folder(&self.output_dir);
-                }
+                    if ui.button("📂 Open Output Folder").clicked() {
+                        open_folder(&self.output_dir);
+                    }
+                });
             });
-        });
     }
 }
 
@@ -338,7 +471,18 @@ fn run_encoding(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    let mut child = cmd.spawn()?;
+    // Spawn FFmpeg with hidden window on Windows
+    let mut child = {
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(0x08000000).spawn()? // CREATE_NO_WINDOW
+        }
+        #[cfg(not(windows))]
+        {
+            cmd.spawn()?
+        }
+    };
+
     let start_time = Instant::now();
 
     // Send immediate update that FFmpeg has started
@@ -360,20 +504,21 @@ fn run_encoding(
             child.kill()?;
             let _ = progress_sender.send((
                 -2.0,
-                format!("FRAME:Frame: {:04} | Paused | ETA: {}", last_frame, last_eta),
+                format!(
+                    "FRAME:Frame: {:04} | Paused | ETA: {}",
+                    last_frame, last_eta
+                ),
             ));
             return Ok(());
         }
 
         // Read and parse progress file
         if let Ok(contents) = fs::read_to_string(&progress_path) {
-            let mut frame_line = String::new();
             let mut progress_value = 0.0;
             let mut current_frame = start_frame;
 
             for line in contents.lines() {
                 if line.starts_with("frame=") {
-                    frame_line = line.trim().to_string();
                     if let Some(frame_str) = line.split('=').nth(1) {
                         if let Ok(frame_num) = frame_str.trim().parse::<u32>() {
                             current_frame = frame_num;
@@ -385,8 +530,9 @@ fn run_encoding(
                         if let Ok(out_time_ms) = time_str.parse::<u64>() {
                             let current_secs = out_time_ms / 1_000_000;
                             if duration > 0.0 {
-                                progress_value = (current_secs as f32 / duration * 100.0).min(100.0);
-                                
+                                progress_value =
+                                    (current_secs as f32 / duration * 100.0).min(100.0);
+
                                 let elapsed = start_time.elapsed().as_secs_f32();
                                 if progress_value > 0.1 {
                                     let total_estimated = (elapsed * 100.0) / progress_value;
@@ -413,15 +559,9 @@ fn run_encoding(
                     current_frame, progress_value, width, height, last_eta
                 )
             };
-            
+
             // Send detailed log update with FRAME: prefix
             let _ = progress_sender.send((progress_value, detailed_log));
-            
-            // Send progress update separately
-            let _ = progress_sender.send((
-                progress_value,
-                format!("{}|{}", progress_value, last_eta),
-            ));
         }
 
         thread::sleep(Duration::from_millis(200));
@@ -442,9 +582,8 @@ fn run_encoding(
                 last_frame, width, height
             )
         };
-        
+
         let _ = progress_sender.send((100.0, detailed_log));
-        let _ = progress_sender.send((100.0, "100.0|00:00".to_string()));
         Ok(())
     } else {
         Err(anyhow!(
@@ -461,7 +600,8 @@ fn get_resolution(input: &Path, ffprobe_path: &Path) -> Result<(u32, u32)> {
         .to_str()
         .ok_or_else(|| anyhow!("Invalid video path"))?;
 
-    let output = Command::new(ffprobe_path)
+    let mut command = Command::new(ffprobe_path);
+    command
         .args([
             "-v",
             "error",
@@ -473,7 +613,20 @@ fn get_resolution(input: &Path, ffprobe_path: &Path) -> Result<(u32, u32)> {
             "csv=p=0",
             input_str,
         ])
-        .output()?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let output = {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000).output()?
+        }
+        #[cfg(not(windows))]
+        {
+            command.output()?
+        }
+    };
 
     if !output.status.success() {
         return Err(anyhow!(
@@ -499,7 +652,8 @@ fn get_duration(input: &Path, ffprobe_path: &Path) -> Result<f32> {
         .to_str()
         .ok_or_else(|| anyhow!("Invalid video path"))?;
 
-    let output = Command::new(ffprobe_path)
+    let mut command = Command::new(ffprobe_path);
+    command
         .args([
             "-v",
             "error",
@@ -509,7 +663,20 @@ fn get_duration(input: &Path, ffprobe_path: &Path) -> Result<f32> {
             "default=noprint_wrappers=1:nokey=1",
             input_str,
         ])
-        .output()?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let output = {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000).output()?
+        }
+        #[cfg(not(windows))]
+        {
+            command.output()?
+        }
+    };
 
     if !output.status.success() {
         return Err(anyhow!(
@@ -547,7 +714,7 @@ fn find_ffmpeg() -> (PathBuf, PathBuf, String) {
     let locations = [
         PathBuf::from(ffmpeg_name),
         PathBuf::from("assets").join(ffmpeg_name),
-        PathBuf::from("platform-tools").join(ffmpeg_name),
+        PathBuf::from("ffmpeg").join(ffmpeg_name),
     ];
 
     for path in &locations {
