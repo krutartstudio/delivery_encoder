@@ -19,20 +19,49 @@ pub struct DeliveryEncoderApp {
     pub progress: f32,
     pub encoding: bool,
     pub worker_thread: Option<thread::JoinHandle<()>>,
-    pub progress_receiver: Receiver<(f32, String)>,
+    pub progress_receiver: Receiver<(f32, u32, String)>,
     pub cancel_sender: Option<Sender<()>>,
     pub ffmpeg_path: PathBuf,
     pub ffprobe_path: PathBuf,
     pub current_frame: String,
     pub resolution: Resolution,
+    pub input_video: PathBuf,
+    pub sufficient_storage: bool,
+    pub storage_error: Option<String>,
+    pub base_name: String, // Added to store base name
 }
 
 impl DeliveryEncoderApp {
     pub fn new() -> Self {
         let (ffmpeg_path, ffprobe_path, _) = find_ffmpeg();
 
-        Self {
-            output_dir: PathBuf::from("output"),
+        // Find first .mov file in assets directory
+        let input_video = std::fs::read_dir("assets")
+            .and_then(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .find(|entry| {
+                        entry.path().is_file()
+                            && entry.path().extension().map_or(false, |ext| ext == "mov")
+                    })
+                    .map(|entry| entry.path())
+                    .ok_or_else(|| {
+                        std::io::Error::new(std::io::ErrorKind::NotFound, "No .mov file found")
+                    })
+            })
+            .unwrap_or_else(|_| PathBuf::from("assets/video.mov"));
+
+        // Get base filename
+        let base_name = input_video
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "video".to_string());
+
+        // Set output directory based on video filename
+        let output_dir = PathBuf::from("output").join(&base_name);
+
+        let mut app = Self {
+            output_dir,
             status: "Ready".to_string(),
             progress: 0.0,
             encoding: false,
@@ -41,8 +70,27 @@ impl DeliveryEncoderApp {
             cancel_sender: None,
             ffmpeg_path,
             ffprobe_path,
-            current_frame: "Frame: 0000 | Idle | ETA: --:--".to_string(),
+            current_frame: "File: -- | Idle | ETA: --:--".to_string(),
             resolution: Resolution::K6,
+            input_video,
+            sufficient_storage: false,
+            storage_error: None,
+            base_name, // Store base name
+        };
+        app.update_storage_status();
+        app
+    }
+
+    pub fn update_storage_status(&mut self) {
+        match self.check_storage_availability() {
+            Ok(_) => {
+                self.sufficient_storage = true;
+                self.storage_error = None;
+            }
+            Err(e) => {
+                self.sufficient_storage = false;
+                self.storage_error = Some(e.to_string());
+            }
         }
     }
 
@@ -51,9 +99,15 @@ impl DeliveryEncoderApp {
             return;
         }
 
-        // Hardcoded paths to assets
-        let input_video = PathBuf::from("assets/video.mov");
-        let overlay_image = PathBuf::from("assets/overlay.png");
+        // Use found input video
+        let input_video = self.input_video.clone();
+
+        // Select overlay based on resolution
+        let overlay_image = match self.resolution {
+            Resolution::K2 => PathBuf::from("assets/overlay_2k.png"),
+            Resolution::K4 => PathBuf::from("assets/overlay_4k.png"),
+            Resolution::K6 => PathBuf::from("assets/overlay_6k.png"),
+        };
 
         // Validation checks
         let validation_errors = [
@@ -70,11 +124,14 @@ impl DeliveryEncoderApp {
             ),
             (
                 !input_video.exists(),
-                "Error: Input video not found in assets".into(),
+                format!("Error: Input video not found at {}", input_video.display()),
             ),
             (
                 !overlay_image.exists(),
-                "Error: Overlay image not found in assets".into(),
+                format!(
+                    "Error: Overlay image not found at {}",
+                    overlay_image.display()
+                ),
             ),
             (
                 std::fs::create_dir_all(&self.output_dir).is_err(),
@@ -84,7 +141,7 @@ impl DeliveryEncoderApp {
 
         if let Some((_, error)) = validation_errors.iter().find(|(cond, _)| *cond) {
             self.status = error.clone();
-            self.current_frame = format!("Frame: 0000 | {} | ETA: --:--", error);
+            self.current_frame = format!("File: -- | {} | ETA: --:--", error);
             return;
         }
 
@@ -98,7 +155,7 @@ impl DeliveryEncoderApp {
             }
             Err(e) => {
                 self.status = format!("Storage error: {}", e);
-                self.current_frame = format!("Frame: 0000 | {} | ETA: --:--", self.status);
+                self.current_frame = format!("File: -- | {} | ETA: --:--", self.status);
                 return;
             }
         }
@@ -106,7 +163,31 @@ impl DeliveryEncoderApp {
         self.status = "Encoding...".to_string();
         self.encoding = true;
         self.progress = 0.0;
-        self.current_frame = "Frame: 0000 | Starting FFmpeg | ETA: --:--".to_string();
+
+        // Find existing frames to determine start number
+        let mut max_frame = 0;
+        if let Ok(entries) = std::fs::read_dir(&self.output_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                    if file_name.starts_with(&self.base_name) && file_name.ends_with(".png") {
+                        let num_str = file_name
+                            .trim_start_matches(&self.base_name)
+                            .trim_start_matches('_')
+                            .trim_end_matches(".png");
+                        if let Ok(num) = num_str.parse::<u32>() {
+                            if num > max_frame {
+                                max_frame = num;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Generate first file name
+        let first_file = format!("{}_{:04}.png", self.base_name, max_frame);
+        self.current_frame = format!("File: {} | Starting FFmpeg | ETA: --:--", first_file);
 
         let (progress_sender, progress_receiver) = std::sync::mpsc::channel();
         let (cancel_sender, cancel_receiver) = std::sync::mpsc::channel();
@@ -122,12 +203,13 @@ impl DeliveryEncoderApp {
             ffmpeg_path: self.ffmpeg_path.clone(),
             ffprobe_path: self.ffprobe_path.clone(),
             resolution: self.resolution,
+            base_name: self.base_name.clone(), // Use app's base name
         };
 
         let frame_sender = progress_sender.clone();
         self.worker_thread = Some(thread::spawn(move || {
             if let Err(e) = run_encoding(&config, progress_sender, cancel_receiver) {
-                let _ = frame_sender.send((-1.0, format!("Error: {}", e)));
+                let _ = frame_sender.send((-1.0, 0, format!("Error: {}", e)));
             }
         }));
     }
@@ -140,17 +222,15 @@ impl DeliveryEncoderApp {
         let (width, height) = match self.resolution {
             Resolution::K2 => (2048, 2048),
             Resolution::K4 => (4096, 4096),
-            Resolution::K6 => {
-                get_resolution(&PathBuf::from("assets/video.mov"), &self.ffprobe_path)?
-            }
+            Resolution::K6 => get_resolution(&self.input_video, &self.ffprobe_path)?,
         };
 
         // Calculate bytes per frame
         let bytes_per_frame = (width as u64) * (height as u64) * 4; // 4 bytes per pixel (RGBA)
 
         // Get video duration and frame rate
-        let duration = get_duration(&PathBuf::from("assets/video.mov"), &self.ffprobe_path)?;
-        let frame_rate = get_frame_rate(&PathBuf::from("assets/video.mov"), &self.ffprobe_path)?;
+        let duration = get_duration(&self.input_video, &self.ffprobe_path)?;
+        let frame_rate = get_frame_rate(&self.input_video, &self.ffprobe_path)?;
         let total_frames = (duration * frame_rate).ceil() as u64;
 
         // Calculate total required space with 20% buffer
@@ -186,23 +266,27 @@ impl DeliveryEncoderApp {
 impl eframe::App for DeliveryEncoderApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Handle progress updates
-        while let Ok((progress, message)) = self.progress_receiver.try_recv() {
+        while let Ok((progress, frame, message)) = self.progress_receiver.try_recv() {
+            // Generate file name using app's base name
+            let file_name = format!("{}_{:04}.png", self.base_name, frame);
+            let full_message = format!("File: {} | {}", file_name, message);
+
             if progress < 0.0 {
                 // Error message
-                self.status = message.clone();
+                self.status = full_message.clone();
                 self.encoding = false;
-                self.current_frame = message;
+                self.current_frame = full_message;
             } else if progress >= 100.0 {
                 // Completion message
                 self.progress = 100.0;
                 self.status = "Done!".to_string();
                 self.encoding = false;
-                self.current_frame = message;
+                self.current_frame = full_message;
             } else {
                 // Update progress percentage
                 self.progress = progress;
                 // Always update the status line with the message
-                self.current_frame = message.clone();
+                self.current_frame = full_message;
             }
         }
 
@@ -229,6 +313,7 @@ impl eframe::App for DeliveryEncoderApp {
             })
             .show(ctx, |ui| {
                 // Resolution selection
+                let prev_resolution = self.resolution;
                 ui.horizontal(|ui| {
                     ui.label("Resolution:");
                     egui::ComboBox::from_id_source("resolution_combo")
@@ -251,6 +336,9 @@ impl eframe::App for DeliveryEncoderApp {
                             );
                         });
                 });
+                if prev_resolution != self.resolution {
+                    self.update_storage_status();
+                }
 
                 ui.separator();
 
@@ -260,6 +348,7 @@ impl eframe::App for DeliveryEncoderApp {
                     if ui.button("📂 Browse...").clicked() {
                         if let Some(path) = FileDialog::new().pick_folder() {
                             self.output_dir = path;
+                            self.update_storage_status();
                         }
                     }
                     ui.label(self.output_dir.display().to_string());
@@ -276,6 +365,13 @@ impl eframe::App for DeliveryEncoderApp {
                         .text(format!("{:.1}%", self.progress)),
                 );
 
+                // Show storage error if exists and not encoding
+                if !self.encoding {
+                    if let Some(err) = &self.storage_error {
+                        ui.colored_label(egui::Color32::RED, err);
+                    }
+                }
+
                 ui.add_space(10.0);
 
                 // Action buttons
@@ -284,8 +380,14 @@ impl eframe::App for DeliveryEncoderApp {
                         if ui.button("⛔ Stop").clicked() {
                             self.cancel_encoding();
                         }
-                    } else if ui.button("▶ Start Encoding").clicked() {
-                        self.start_encoding();
+                    } else {
+                        let start_enabled = self.sufficient_storage;
+                        if ui
+                            .add_enabled(start_enabled, egui::Button::new("▶ Start Encoding"))
+                            .clicked()
+                        {
+                            self.start_encoding();
+                        }
                     }
 
                     if ui.button("📂 Open Output Folder").clicked() {

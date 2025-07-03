@@ -30,7 +30,7 @@ pub fn find_ffmpeg() -> (PathBuf, PathBuf, String) {
     // Check common locations
     let locations = [
         PathBuf::from(ffmpeg_name),
-        PathBuf::from("assets").join(ffmpeg_name),
+        PathBuf::from("assets").join("ffmpeg").join(ffmpeg_name), // Updated path
         PathBuf::from("ffmpeg").join(ffmpeg_name),
     ];
 
@@ -84,7 +84,7 @@ pub fn get_resolution(input: &Path, ffprobe_path: &Path) -> Result<(u32, u32)> {
     let output = {
         #[cfg(windows)]
         {
-            command.creation_flags(0x08000000).output()?
+            command.creation_flags(0x08000000).output()? // CREATE_NO_WINDOW
         }
         #[cfg(not(windows))]
         {
@@ -133,7 +133,7 @@ pub fn get_duration(input: &Path, ffprobe_path: &Path) -> Result<f32> {
     let output = {
         #[cfg(windows)]
         {
-            command.creation_flags(0x08000000).output()?
+            command.creation_flags(0x08000000).output()? // CREATE_NO_WINDOW
         }
         #[cfg(not(windows))]
         {
@@ -178,7 +178,7 @@ pub fn get_frame_rate(input: &Path, ffprobe_path: &Path) -> Result<f32> {
     let output = {
         #[cfg(windows)]
         {
-            command.creation_flags(0x08000000).output()?
+            command.creation_flags(0x08000000).output()? // CREATE_NO_WINDOW
         }
         #[cfg(not(windows))]
         {

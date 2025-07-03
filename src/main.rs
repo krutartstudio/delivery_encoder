@@ -1,5 +1,7 @@
-use anyhow::Result;
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use anyhow::anyhow;
+use anyhow::Result;
 use eframe::egui;
 
 mod app;

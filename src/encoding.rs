@@ -22,16 +22,21 @@ pub struct EncodingConfig {
     pub ffmpeg_path: PathBuf,
     pub ffprobe_path: PathBuf,
     pub resolution: Resolution,
+    pub base_name: String,
 }
 
 pub fn run_encoding(
     config: &EncodingConfig,
-    progress_sender: Sender<(f32, String)>,
+    progress_sender: Sender<(f32, u32, String)>,
     cancel_receiver: Receiver<()>,
 ) -> Result<()> {
     let duration = get_duration(&config.input_video, &config.ffprobe_path)?;
     let resolution = get_resolution(&config.input_video, &config.ffprobe_path)?;
     let (width, height) = (resolution.0, resolution.1);
+
+    // Create output pattern using base name
+    let output_pattern = format!("{}_%04d.png", config.base_name);
+    let output_path = config.output_dir.join(&output_pattern);
 
     // Find existing frames to determine start number
     let mut max_frame = 0;
@@ -39,8 +44,11 @@ pub fn run_encoding(
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                if file_name.starts_with("frame_") && file_name.ends_with(".png") {
-                    let num_str = &file_name[6..file_name.len() - 4];
+                if file_name.starts_with(&config.base_name) && file_name.ends_with(".png") {
+                    let num_str = file_name
+                        .trim_start_matches(&config.base_name)
+                        .trim_start_matches('_')
+                        .trim_end_matches(".png");
                     if let Ok(num) = num_str.parse::<u32>() {
                         if num > max_frame {
                             max_frame = num;
@@ -52,6 +60,7 @@ pub fn run_encoding(
     }
     // Start from last frame
     let start_frame = max_frame;
+    let mut last_frame = start_frame;
 
     let temp_progress = tempfile::NamedTempFile::new()?;
     let progress_path = temp_progress.path().to_path_buf();
@@ -91,7 +100,7 @@ pub fn run_encoding(
         .arg(start_frame.to_string())
         .arg("-progress")
         .arg(&progress_path)
-        .arg(config.output_dir.join("frame_%04d.png"))
+        .arg(output_path)
         .arg("-y")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -113,38 +122,36 @@ pub fn run_encoding(
     // Send immediate update that FFmpeg has started
     let _ = progress_sender.send((
         0.0,
+        start_frame,
         format!(
-            "Frame: {:04} | Processing | Res: {}x{} | Start: {:04} | ETA: --:--",
-            start_frame, target_width, target_height, start_frame
+            "Processing | Res: {}x{} | Start: {:04} | ETA: --:--",
+            target_width, target_height, start_frame
         ),
     ));
 
     // Track last frame and ETA for consistent status
-    let mut last_frame = start_frame;
     let mut last_eta = "--:--".to_string();
 
     while child.try_wait()?.is_none() {
         // Handle cancel requests
         if cancel_receiver.try_recv().is_ok() {
             child.kill()?;
-            let _ = progress_sender.send((
-                -2.0,
-                format!("Frame: {:04} | Paused | ETA: {}", last_frame, last_eta),
-            ));
+            let _ = progress_sender.send((-2.0, last_frame, format!("Paused | ETA: {}", last_eta)));
             return Ok(());
         }
 
         // Read and parse progress file
         if let Ok(contents) = std::fs::read_to_string(&progress_path) {
             let mut progress_value = 0.0;
-            let mut current_frame = start_frame;
+            let mut current_frame_index = 0;
 
             for line in contents.lines() {
                 if line.starts_with("frame=") {
                     if let Some(frame_str) = line.split('=').nth(1) {
-                        if let Ok(frame_num) = frame_str.trim().parse::<u32>() {
-                            current_frame = frame_num;
-                            last_frame = frame_num;
+                        if let Ok(frame_index) = frame_str.trim().parse::<u32>() {
+                            current_frame_index = frame_index;
+                            // Calculate absolute frame number by adding start offset
+                            last_frame = start_frame + frame_index;
                         }
                     }
                 } else if line.starts_with("out_time_ms") {
@@ -169,21 +176,18 @@ pub fn run_encoding(
                 }
             }
 
-            // Create detailed single-line log with frame and ETA
+            // Create detailed log without file name
             let detailed_log = if config.resolution != Resolution::K6 {
                 format!(
-                    "Frame: {:04} | Progress: {:.1}% | Res: {}x{} | ETA: {}",
-                    current_frame, progress_value, target_width, target_height, last_eta
+                    "Processing | Res: {}x{} | ETA: {}",
+                    target_width, target_height, last_eta
                 )
             } else {
-                format!(
-                    "Frame: {:04} | Progress: {:.1}% | Res: {}x{} | ETA: {}",
-                    current_frame, progress_value, width, height, last_eta
-                )
+                format!("Processing | Res: {}x{} | ETA: {}", width, height, last_eta)
             };
 
-            // Send detailed log update
-            let _ = progress_sender.send((progress_value, detailed_log));
+            // Send detailed log update with absolute frame number
+            let _ = progress_sender.send((progress_value, last_frame, detailed_log));
         }
 
         thread::sleep(Duration::from_millis(200));
@@ -192,20 +196,17 @@ pub fn run_encoding(
     // Final check after process completes
     let status = child.wait()?;
     if status.success() {
-        // Final detailed status with frame and ETA
+        // Final detailed status with file name and ETA
         let detailed_log = if config.resolution != Resolution::K6 {
             format!(
-                "Frame: {:04} | Progress: 100.0% | Res: {}x{} | ETA: 00:00",
-                last_frame, target_width, target_height
+                "Processing | Res: {}x{} | ETA: 00:00",
+                target_width, target_height
             )
         } else {
-            format!(
-                "Frame: {:04} | Progress: 100.0% | Res: {}x{} | ETA: 00:00",
-                last_frame, width, height
-            )
+            format!("Processing | Res: {}x{} | ETA: 00:00", width, height)
         };
 
-        let _ = progress_sender.send((100.0, detailed_log));
+        let _ = progress_sender.send((100.0, last_frame, detailed_log));
         Ok(())
     } else {
         Err(anyhow!(
