@@ -31,10 +31,9 @@ pub fn run_encoding(
     cancel_receiver: Receiver<()>,
 ) -> Result<()> {
     let duration = get_duration(&config.input_video, &config.ffprobe_path)?;
+    let frame_rate = get_frame_rate(&config.input_video, &config.ffprobe_path)?;
     let resolution = get_resolution(&config.input_video, &config.ffprobe_path)?;
     let (width, height) = (resolution.0, resolution.1);
-    // Get frame rate for seeking
-    let frame_rate = get_frame_rate(&config.input_video, &config.ffprobe_path)?;
 
     // Create output pattern using base name
     let output_pattern = format!("{}_%04d.png", config.base_name);
@@ -42,6 +41,7 @@ pub fn run_encoding(
 
     // Find existing frames to determine start number
     let mut max_frame = 0;
+    let mut found_any = false;
     if let Ok(entries) = std::fs::read_dir(&config.output_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -55,20 +55,20 @@ pub fn run_encoding(
                         if num > max_frame {
                             max_frame = num;
                         }
+                        found_any = true;
                     }
                 }
             }
         }
     }
-    // Start from last frame
-    let start_frame = max_frame;
-    let mut last_frame = start_frame;
+
+    // Calculate start time for FFmpeg seeking
+    let start_frame = if found_any { max_frame } else { 0 };
+    let start_time_secs = start_frame as f32 / frame_rate;
+    let start_time_str = format!("{:.3}", start_time_secs);
 
     let temp_progress = tempfile::NamedTempFile::new()?;
     let progress_path = temp_progress.path().to_path_buf();
-
-    // Calculate the seek time in seconds
-    let seek_seconds = max_frame as f32 / frame_rate;
 
     // Handle resolution scaling
     let (target_width, target_height) = match config.resolution.target_size() {
@@ -78,23 +78,22 @@ pub fn run_encoding(
 
     let filter_complex = if config.resolution != Resolution::K6 {
         format!(
-            "[0:v]select=gte(n\\,{}),scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2[vid]; \
+            "[0:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2[vid]; \
              [1:v]scale={}:{}[ovr]; \
              [vid][ovr]overlay=0:0",
-            max_frame, target_width, target_height, target_width, target_height, target_width, target_height
+            target_width, target_height, target_width, target_height, target_width, target_height
         )
     } else {
         format!(
-            "[0:v]select=gte(n\\,{})[selected]; \
-             [1:v]scale={}:{}[ovr]; \
-             [selected][ovr]overlay=0:0",
-            max_frame, width, height
+            "[1:v]scale={}:{}[ovr]; \
+             [0:v][ovr]overlay=0:0",
+            width, height
         )
     };
 
     let mut cmd = Command::new(&config.ffmpeg_path);
     cmd.arg("-ss")
-        .arg(seek_seconds.to_string())
+        .arg(&start_time_str)
         .arg("-i")
         .arg(&config.input_video)
         .arg("-i")
@@ -138,6 +137,7 @@ pub fn run_encoding(
 
     // Track last frame and ETA for consistent status
     let mut last_eta = "--:--".to_string();
+    let mut last_frame = start_frame;
 
     while child.try_wait()?.is_none() {
         // Handle cancel requests
@@ -155,7 +155,7 @@ pub fn run_encoding(
                 if line.starts_with("frame=") {
                     if let Some(frame_str) = line.split('=').nth(1) {
                         if let Ok(frame_index) = frame_str.trim().parse::<u32>() {
-                            // Calculate absolute frame number by adding start offset
+                            // Frame number is absolute since we're using start_number
                             last_frame = start_frame + frame_index;
                         }
                     }

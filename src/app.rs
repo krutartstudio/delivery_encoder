@@ -166,6 +166,7 @@ impl DeliveryEncoderApp {
 
         // Find existing frames to determine start number
         let mut max_frame = 0;
+        let mut found_any = false;
         if let Ok(entries) = std::fs::read_dir(&self.output_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -179,6 +180,7 @@ impl DeliveryEncoderApp {
                             if num > max_frame {
                                 max_frame = num;
                             }
+                            found_any = true;
                         }
                     }
                 }
