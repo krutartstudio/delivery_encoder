@@ -295,14 +295,25 @@ impl eframe::App for DeliveryEncoderApp {
             egui::FontId::new(20.0, egui::FontFamily::Proportional),
         );
 
-        // Improve contrast
+        // Set dark theme with high contrast
+        style.visuals = egui::Visuals::dark();
+        style.visuals.widgets.noninteractive.bg_fill = egui::Color32::from_gray(25);
         style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(35);
-        style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
-        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(50);
+        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(45);
         style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(25);
         style.visuals.window_fill = egui::Color32::from_gray(20);
         style.visuals.panel_fill = egui::Color32::from_gray(25);
         style.visuals.faint_bg_color = egui::Color32::from_gray(35);
+
+        // FIX: Set text color through noninteractive widgets
+        style.visuals.widgets.noninteractive.fg_stroke = // <-- CHANGED HERE
+            egui::Stroke::new(1.0, egui::Color32::from_gray(230));
+        style.visuals.widgets.inactive.fg_stroke =
+            egui::Stroke::new(1.0, egui::Color32::from_gray(240));
+        style.visuals.widgets.hovered.fg_stroke =
+            egui::Stroke::new(1.0, egui::Color32::from_gray(245));
+        style.visuals.widgets.active.fg_stroke =
+            egui::Stroke::new(1.0, egui::Color32::from_gray(250));
 
         ctx.set_style(style);
 
@@ -339,7 +350,8 @@ impl eframe::App for DeliveryEncoderApp {
 
         egui::CentralPanel::default()
             .frame(egui::Frame {
-                inner_margin: egui::Margin::symmetric(20.0, 20.0),
+                // Increased padding (1.5x)
+                inner_margin: egui::Margin::symmetric(30.0, 30.0),
                 fill: ctx.style().visuals.panel_fill,
                 ..Default::default()
             })
@@ -382,15 +394,12 @@ impl eframe::App for DeliveryEncoderApp {
                     self.update_storage_status();
                 }
 
-                ui.add_space(15.0);
-                ui.separator();
-                ui.add_space(15.0);
-
-                // Output Directory
+                // Output Directory - placed right after resolution
+                ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.label("Output Directory:");
                     let browse_button = egui::Button::new("📂 Browse...")
-                        .fill(egui::Color32::from_rgb(50, 120, 180));
+                        .fill(egui::Color32::from_rgb(50, 160, 180));
 
                     // Changed: Only disable during encoding
                     if ui.add_enabled(!self.encoding, browse_button).clicked() {
@@ -405,9 +414,9 @@ impl eframe::App for DeliveryEncoderApp {
                     }
                 });
 
-                ui.add_space(15.0);
+                ui.add_space(20.0);
                 ui.separator();
-                ui.add_space(15.0);
+                ui.add_space(20.0);
 
                 // Status section with improved visibility
                 ui.vertical(|ui| {
@@ -462,8 +471,8 @@ impl eframe::App for DeliveryEncoderApp {
                 // Action buttons with color coding
                 ui.horizontal(|ui| {
                     if self.encoding {
-                        let pause_button = egui::Button::new("⏸️ Pause")
-                            .fill(egui::Color32::from_rgb(180, 120, 0)); // Amber pause button
+                        let pause_button =
+                            egui::Button::new("⏸ Pause").fill(egui::Color32::from_rgb(180, 120, 0)); // Amber pause button
 
                         if ui.add(pause_button).clicked() {
                             self.cancel_encoding();
