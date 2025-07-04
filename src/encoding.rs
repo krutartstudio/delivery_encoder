@@ -73,6 +73,19 @@ pub fn run_encoding(
     let temp_progress = tempfile::NamedTempFile::new()?;
     let progress_path = temp_progress.path().to_path_buf();
 
+    // Write resolution metadata if starting from beginning
+    if start_frame == 0 {
+        let metadata_path = config.output_dir.join(".delivery_encoder_metadata");
+        let _ = std::fs::write(
+            metadata_path,
+            match config.resolution {
+                Resolution::K2 => "2K",
+                Resolution::K4 => "4K",
+                Resolution::K6 => "6K",
+            },
+        );
+    }
+
     // Handle resolution scaling
     let (target_width, target_height) = match config.resolution.target_size() {
         Some((w, h)) => (w, h),

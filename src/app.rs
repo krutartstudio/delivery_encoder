@@ -30,6 +30,7 @@ pub struct DeliveryEncoderApp {
     pub storage_error: Option<String>,
     pub base_name: String,
     pub has_existing_frames: bool,
+    pub detected_resolution: Option<Resolution>,
 }
 
 impl DeliveryEncoderApp {
@@ -73,6 +74,7 @@ impl DeliveryEncoderApp {
             storage_error: Some("Please select output directory".to_string()),
             base_name,
             has_existing_frames: false,
+            detected_resolution: None,
         }
     }
 
@@ -81,10 +83,21 @@ impl DeliveryEncoderApp {
             self.sufficient_storage = false;
             self.storage_error = Some("Please select output directory".to_string());
             self.has_existing_frames = false;
+            self.detected_resolution = None;
             return;
         }
 
         self.has_existing_frames = self.check_for_existing_frames();
+
+        if self.has_existing_frames {
+            // Try to detect resolution from metadata
+            if let Some(resolution) = self.detect_resolution_from_metadata() {
+                self.detected_resolution = Some(resolution);
+                self.resolution = resolution;
+            }
+        } else {
+            self.detected_resolution = None;
+        }
 
         match self.check_storage_availability() {
             Ok(_) => {
@@ -112,6 +125,22 @@ impl DeliveryEncoderApp {
             }
         }
         false
+    }
+
+    fn detect_resolution_from_metadata(&self) -> Option<Resolution> {
+        let output_dir = self.output_dir.as_ref()?;
+        let metadata_path = output_dir.join(".delivery_encoder_metadata");
+
+        if let Ok(contents) = std::fs::read_to_string(metadata_path) {
+            match contents.trim() {
+                "2K" => Some(Resolution::K2),
+                "4K" => Some(Resolution::K4),
+                "6K" => Some(Resolution::K6),
+                _ => None,
+            }
+        } else {
+            None
+        }
     }
 
     pub fn check_storage_availability(&self) -> Result<f64> {
@@ -317,17 +346,17 @@ impl eframe::App for DeliveryEncoderApp {
             })
             .show(ctx, |ui| {
                 let disable_settings = self.encoding || self.has_existing_frames;
+                let disable_resolution = self.encoding || self.has_existing_frames;
+                let disable_browse = self.encoding;
 
                 // Resolution selection
                 let prev_resolution = self.resolution;
                 ui.horizontal(|ui| {
                     ui.label("Resolution:");
-                    // Disable combo box when needed
                     let combo = egui::ComboBox::from_id_source("resolution_combo")
                         .selected_text(self.resolution.as_str());
 
-                    // Use ui.set_enabled to disable the entire combo box
-                    ui.set_enabled(!disable_settings);
+                    ui.set_enabled(!disable_resolution);
                     combo.show_ui(ui, |ui| {
                         ui.selectable_value(
                             &mut self.resolution,
@@ -357,8 +386,7 @@ impl eframe::App for DeliveryEncoderApp {
                     ui.label("Output Directory:");
                     let browse_button = egui::Button::new("📂 Browse...");
 
-                    // Use add_enabled for browse button
-                    if ui.add_enabled(!disable_settings, browse_button).clicked() {
+                    if ui.add_enabled(!disable_browse, browse_button).clicked() {
                         if let Some(path) = FileDialog::new().pick_folder() {
                             self.output_dir = Some(path);
                             self.update_storage_status();
