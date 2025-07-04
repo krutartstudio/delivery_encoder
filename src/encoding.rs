@@ -35,6 +35,9 @@ pub fn run_encoding(
     let resolution = get_resolution(&config.input_video, &config.ffprobe_path)?;
     let (width, height) = (resolution.0, resolution.1);
 
+    // Calculate total frames for overall progress
+    let total_frames = (duration * frame_rate).ceil() as u32;
+
     // Create output pattern using base name
     let output_pattern = format!("{}_%04d.png", config.base_name);
     let output_path = config.output_dir.join(&output_pattern);
@@ -125,9 +128,16 @@ pub fn run_encoding(
 
     let start_time = Instant::now();
 
+    // Calculate initial progress percentage
+    let initial_progress = if total_frames > 0 {
+        (start_frame as f32 / total_frames as f32 * 100.0).min(100.0)
+    } else {
+        0.0
+    };
+
     // Send immediate update that FFmpeg has started
     let _ = progress_sender.send((
-        0.0,
+        initial_progress,
         start_frame,
         format!(
             "Processing | Res: {}x{} | Start: {:04} | ETA: --:--",
@@ -149,7 +159,7 @@ pub fn run_encoding(
 
         // Read and parse progress file
         if let Ok(contents) = std::fs::read_to_string(&progress_path) {
-            let mut progress_value = 0.0;
+            let mut progress_value = initial_progress;
 
             for line in contents.lines() {
                 if line.starts_with("frame=") {
@@ -157,6 +167,12 @@ pub fn run_encoding(
                         if let Ok(frame_index) = frame_str.trim().parse::<u32>() {
                             // Frame number is absolute since we're using start_number
                             last_frame = start_frame + frame_index;
+
+                            // Calculate overall progress percentage
+                            if total_frames > 0 {
+                                progress_value =
+                                    (last_frame as f32 / total_frames as f32 * 100.0).min(100.0);
+                            }
                         }
                     }
                 } else if line.starts_with("out_time_ms") {
@@ -164,11 +180,9 @@ pub fn run_encoding(
                         if let Ok(out_time_ms) = time_str.parse::<u64>() {
                             let current_secs = out_time_ms / 1_000_000;
                             if duration > 0.0 {
-                                progress_value =
-                                    (current_secs as f32 / duration * 100.0).min(100.0);
-
                                 let elapsed = start_time.elapsed().as_secs_f32();
                                 if progress_value > 0.1 {
+                                    // Calculate ETA based on overall progress
                                     let total_estimated = (elapsed * 100.0) / progress_value;
                                     let eta_secs = (total_estimated - elapsed) as u64;
                                     last_eta = format!("{:02}:{:02}", eta_secs / 60, eta_secs % 60);
