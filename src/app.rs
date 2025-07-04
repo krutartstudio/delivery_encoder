@@ -323,7 +323,7 @@ impl eframe::App for DeliveryEncoderApp {
                 ui.horizontal(|ui| {
                     ui.label("Resolution:");
                     // Disable combo box when needed
-                    let mut combo = egui::ComboBox::from_id_source("resolution_combo")
+                    let combo = egui::ComboBox::from_id_source("resolution_combo")
                         .selected_text(self.resolution.as_str());
 
                     // Use ui.set_enabled to disable the entire combo box

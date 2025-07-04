@@ -177,7 +177,8 @@ pub fn run_encoding(
                     }
                 } else if line.starts_with("out_time_ms") {
                     if let Some((_, time_str)) = line.split_once('=') {
-                        if let Ok(out_time_ms) = time_str.parse::<u64>() {
+                        // Mark as intentionally unused since we're using progress-based ETA
+                        if let Ok(_out_time_ms) = time_str.parse::<u64>() {
                             // Remove unused current_secs variable
                             if duration > 0.0 {
                                 let elapsed = start_time.elapsed().as_secs_f32();
