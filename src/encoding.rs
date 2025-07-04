@@ -143,13 +143,11 @@ pub fn run_encoding(
         // Read and parse progress file
         if let Ok(contents) = std::fs::read_to_string(&progress_path) {
             let mut progress_value = 0.0;
-            let mut current_frame_index = 0;
 
             for line in contents.lines() {
                 if line.starts_with("frame=") {
                     if let Some(frame_str) = line.split('=').nth(1) {
                         if let Ok(frame_index) = frame_str.trim().parse::<u32>() {
-                            current_frame_index = frame_index;
                             // Calculate absolute frame number by adding start offset
                             last_frame = start_frame + frame_index;
                         }
