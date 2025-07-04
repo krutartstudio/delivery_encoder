@@ -13,6 +13,12 @@ use crate::{
     utils::{find_ffmpeg, get_duration, get_frame_rate, get_resolution, open_folder},
 };
 
+#[derive(Debug, Clone, PartialEq)]
+enum DialogState {
+    None,
+    CancelConfirmation,
+}
+
 pub struct DeliveryEncoderApp {
     pub output_dir: Option<PathBuf>,
     pub status: String,
@@ -30,6 +36,7 @@ pub struct DeliveryEncoderApp {
     pub storage_error: Option<String>,
     pub base_name: String,
     pub has_existing_frames: bool,
+    pub dialog_state: DialogState,
 }
 
 impl DeliveryEncoderApp {
@@ -73,6 +80,7 @@ impl DeliveryEncoderApp {
             storage_error: Some("Please select output directory".to_string()),
             base_name,
             has_existing_frames: false,
+            dialog_state: DialogState::None,
         }
     }
 
@@ -267,12 +275,41 @@ impl DeliveryEncoderApp {
         }));
     }
 
-    pub fn cancel_encoding(&mut self) {
+    pub fn cancel_encoding_with_dialog(&mut self) {
+        self.dialog_state = DialogState::CancelConfirmation;
+    }
+
+    pub fn cancel_encoding(&mut self, delete_frames: bool) {
+        // Send cancel signal to encoding thread
         if let Some(sender) = self.cancel_sender.take() {
             let _ = sender.send(());
         }
+
+        // Delete frames if requested
+        if delete_frames {
+            if let Some(output_dir) = &self.output_dir {
+                if let Ok(entries) = std::fs::read_dir(output_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                            if file_name.starts_with(&self.base_name) && file_name.ends_with(".png")
+                            {
+                                let _ = std::fs::remove_file(&path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Reset app state
         self.encoding = false;
-        self.status = "Paused".to_string();
+        self.status = "Ready".to_string();
+        self.progress = 0.0;
+        self.current_frame = "File: -- | Idle | ETA: --:--".to_string();
+        self.has_existing_frames = self.check_for_existing_frames();
+        self.update_storage_status();
+        self.dialog_state = DialogState::None;
     }
 }
 
@@ -306,7 +343,7 @@ impl eframe::App for DeliveryEncoderApp {
         style.visuals.faint_bg_color = egui::Color32::from_gray(35);
 
         // FIX: Set text color through noninteractive widgets
-        style.visuals.widgets.noninteractive.fg_stroke = // <-- CHANGED HERE
+        style.visuals.widgets.noninteractive.fg_stroke =
             egui::Stroke::new(1.0, egui::Color32::from_gray(230));
         style.visuals.widgets.inactive.fg_stroke =
             egui::Stroke::new(1.0, egui::Color32::from_gray(240));
@@ -356,7 +393,8 @@ impl eframe::App for DeliveryEncoderApp {
                 ..Default::default()
             })
             .show(ctx, |ui| {
-                let disable_settings = self.encoding || self.has_existing_frames;
+                // Fix: prefix with underscore to suppress unused variable warning
+                let _disable_settings = self.encoding || self.has_existing_frames;
 
                 // Section title with improved contrast
                 ui.heading("Encoder Settings");
@@ -471,11 +509,11 @@ impl eframe::App for DeliveryEncoderApp {
                 // Action buttons with color coding
                 ui.horizontal(|ui| {
                     if self.encoding {
-                        let pause_button =
-                            egui::Button::new("⏸ Pause").fill(egui::Color32::from_rgb(180, 120, 0)); // Amber pause button
+                        let cancel_button = egui::Button::new("⏹ Cancel")
+                            .fill(egui::Color32::from_rgb(180, 80, 80)); // Red color for cancel
 
-                        if ui.add(pause_button).clicked() {
-                            self.cancel_encoding();
+                        if ui.add(cancel_button).clicked() {
+                            self.cancel_encoding_with_dialog();
                         }
                     } else {
                         let start_enabled = self.sufficient_storage;
@@ -508,5 +546,33 @@ impl eframe::App for DeliveryEncoderApp {
                     }
                 });
             });
+
+        // Draw the cancellation confirmation dialog if active
+        if self.dialog_state == DialogState::CancelConfirmation {
+            egui::Window::new("Cancel Encoding?")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.label("Are you sure you want to cancel encoding?");
+                        ui.add_space(10.0);
+                        ui.label("Delete already generated frames?");
+                        ui.add_space(10.0);
+
+                        ui.horizontal(|ui| {
+                            if ui.button("Yes, delete frames").clicked() {
+                                self.cancel_encoding(true);
+                            }
+                            if ui.button("No, keep frames").clicked() {
+                                self.cancel_encoding(false);
+                            }
+                            if ui.button("No, continue").clicked() {
+                                self.dialog_state = DialogState::None;
+                            }
+                        });
+                    });
+                });
+        }
     }
 }
