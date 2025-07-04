@@ -14,7 +14,7 @@ use crate::{
 };
 
 pub struct DeliveryEncoderApp {
-    pub output_dir: Option<PathBuf>, // Changed to Option
+    pub output_dir: Option<PathBuf>,
     pub status: String,
     pub progress: f32,
     pub encoding: bool,
@@ -29,6 +29,7 @@ pub struct DeliveryEncoderApp {
     pub sufficient_storage: bool,
     pub storage_error: Option<String>,
     pub base_name: String,
+    pub existing_frames: bool, // Tracks if any frames exist in output directory
 }
 
 impl DeliveryEncoderApp {
@@ -58,7 +59,7 @@ impl DeliveryEncoderApp {
             .unwrap_or_else(|| "video".to_string());
 
         Self {
-            output_dir: None, // No default output directory
+            output_dir: None,
             status: "Ready".to_string(),
             progress: 0.0,
             encoding: false,
@@ -71,8 +72,9 @@ impl DeliveryEncoderApp {
             resolution: Resolution::K6,
             input_video,
             sufficient_storage: false,
-            storage_error: Some("Please select output directory".to_string()), // Initial message
+            storage_error: Some("Please select output directory".to_string()),
             base_name,
+            existing_frames: false, // Initialize as false
         }
     }
 
@@ -81,8 +83,24 @@ impl DeliveryEncoderApp {
         if self.output_dir.is_none() {
             self.sufficient_storage = false;
             self.storage_error = Some("Please select output directory".to_string());
+            self.existing_frames = false;
             return;
         }
+
+        // Check for existing frames
+        self.existing_frames =
+            if let Ok(entries) = std::fs::read_dir(self.output_dir.as_ref().unwrap()) {
+                entries.filter_map(Result::ok).any(|entry| {
+                    let path = entry.path();
+                    if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                        file_name.starts_with(&self.base_name) && file_name.ends_with(".png")
+                    } else {
+                        false
+                    }
+                })
+            } else {
+                false
+            };
 
         match self.check_storage_availability() {
             Ok(_) => {
@@ -145,6 +163,9 @@ impl DeliveryEncoderApp {
         if self.encoding {
             return;
         }
+
+        // Update frame status before starting
+        self.update_storage_status();
 
         // Validation: Output directory must be set
         if self.output_dir.is_none() {
@@ -276,6 +297,7 @@ impl DeliveryEncoderApp {
         }
         self.encoding = false;
         self.status = "Paused".to_string();
+        self.update_storage_status(); // Refresh frame status
     }
 }
 
@@ -292,12 +314,14 @@ impl eframe::App for DeliveryEncoderApp {
                 self.status = full_message.clone();
                 self.encoding = false;
                 self.current_frame = full_message;
+                self.update_storage_status(); // Refresh frame status
             } else if progress >= 100.0 {
                 // Completion message
                 self.progress = 100.0;
                 self.status = "Done!".to_string();
                 self.encoding = false;
                 self.current_frame = full_message;
+                self.update_storage_status(); // Refresh frame status
             } else {
                 // Update progress percentage
                 self.progress = progress;
@@ -320,6 +344,9 @@ impl eframe::App for DeliveryEncoderApp {
             ctx.request_repaint();
         }
 
+        // Disable controls during encoding or if frames exist
+        let disable_resolution_and_output = self.encoding || self.existing_frames;
+
         // Create a frame with padding around the entire UI
         egui::CentralPanel::default()
             .frame(egui::Frame {
@@ -332,25 +359,31 @@ impl eframe::App for DeliveryEncoderApp {
                 let prev_resolution = self.resolution;
                 ui.horizontal(|ui| {
                     ui.label("Resolution:");
-                    egui::ComboBox::from_id_source("resolution_combo")
-                        .selected_text(self.resolution.as_str())
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.resolution,
-                                Resolution::K2,
-                                Resolution::K2.as_str(),
-                            );
-                            ui.selectable_value(
-                                &mut self.resolution,
-                                Resolution::K4,
-                                Resolution::K4.as_str(),
-                            );
-                            ui.selectable_value(
-                                &mut self.resolution,
-                                Resolution::K6,
-                                Resolution::K6.as_str(),
-                            );
-                        });
+                    let mut combo = egui::ComboBox::from_id_source("resolution_combo")
+                        .selected_text(self.resolution.as_str());
+
+                    // Disable if needed
+                    if disable_resolution_and_output {
+                        combo = combo.enabled(false);
+                    }
+
+                    combo.show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.resolution,
+                            Resolution::K2,
+                            Resolution::K2.as_str(),
+                        );
+                        ui.selectable_value(
+                            &mut self.resolution,
+                            Resolution::K4,
+                            Resolution::K4.as_str(),
+                        );
+                        ui.selectable_value(
+                            &mut self.resolution,
+                            Resolution::K6,
+                            Resolution::K6.as_str(),
+                        );
+                    });
                 });
                 if prev_resolution != self.resolution {
                     self.update_storage_status();
@@ -361,12 +394,19 @@ impl eframe::App for DeliveryEncoderApp {
                 // Output Directory
                 ui.horizontal(|ui| {
                     ui.label("Output Directory:");
-                    if ui.button("📂 Browse...").clicked() {
+                    let browse_button = egui::Button::new("📂 Browse...");
+
+                    // Disable if needed
+                    if ui
+                        .add_enabled(!disable_resolution_and_output, browse_button)
+                        .clicked()
+                    {
                         if let Some(path) = FileDialog::new().pick_folder() {
                             self.output_dir = Some(path);
                             self.update_storage_status();
                         }
                     }
+
                     match &self.output_dir {
                         Some(path) => ui.label(path.display().to_string()),
                         None => ui.label("Not selected"),
