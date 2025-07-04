@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     models::Resolution,
-    utils::{get_duration, get_resolution},
+    utils::{get_duration, get_frame_rate, get_resolution},
 };
 
 #[cfg(windows)]
@@ -33,6 +33,8 @@ pub fn run_encoding(
     let duration = get_duration(&config.input_video, &config.ffprobe_path)?;
     let resolution = get_resolution(&config.input_video, &config.ffprobe_path)?;
     let (width, height) = (resolution.0, resolution.1);
+    // Get frame rate for seeking
+    let frame_rate = get_frame_rate(&config.input_video, &config.ffprobe_path)?;
 
     // Create output pattern using base name
     let output_pattern = format!("{}_%04d.png", config.base_name);
@@ -65,6 +67,9 @@ pub fn run_encoding(
     let temp_progress = tempfile::NamedTempFile::new()?;
     let progress_path = temp_progress.path().to_path_buf();
 
+    // Calculate the seek time in seconds
+    let seek_seconds = max_frame as f32 / frame_rate;
+
     // Handle resolution scaling
     let (target_width, target_height) = match config.resolution.target_size() {
         Some((w, h)) => (w, h),
@@ -88,7 +93,9 @@ pub fn run_encoding(
     };
 
     let mut cmd = Command::new(&config.ffmpeg_path);
-    cmd.arg("-i")
+    cmd.arg("-ss")
+        .arg(seek_seconds.to_string())
+        .arg("-i")
         .arg(&config.input_video)
         .arg("-i")
         .arg(&config.overlay_image)
