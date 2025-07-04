@@ -14,7 +14,7 @@ use crate::{
 };
 
 pub struct DeliveryEncoderApp {
-    pub output_dir: PathBuf,
+    pub output_dir: Option<PathBuf>, // Changed to Option
     pub status: String,
     pub progress: f32,
     pub encoding: bool,
@@ -28,7 +28,7 @@ pub struct DeliveryEncoderApp {
     pub input_video: PathBuf,
     pub sufficient_storage: bool,
     pub storage_error: Option<String>,
-    pub base_name: String, // Added to store base name
+    pub base_name: String,
 }
 
 impl DeliveryEncoderApp {
@@ -57,11 +57,8 @@ impl DeliveryEncoderApp {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "video".to_string());
 
-        // Set output directory based on video filename
-        let output_dir = PathBuf::from("output").join(&base_name);
-
-        let mut app = Self {
-            output_dir,
+        Self {
+            output_dir: None, // No default output directory
             status: "Ready".to_string(),
             progress: 0.0,
             encoding: false,
@@ -74,14 +71,19 @@ impl DeliveryEncoderApp {
             resolution: Resolution::K6,
             input_video,
             sufficient_storage: false,
-            storage_error: None,
-            base_name, // Store base name
-        };
-        app.update_storage_status();
-        app
+            storage_error: Some("Please select output directory".to_string()), // Initial message
+            base_name,
+        }
     }
 
     pub fn update_storage_status(&mut self) {
+        // Only check storage if output directory is set
+        if self.output_dir.is_none() {
+            self.sufficient_storage = false;
+            self.storage_error = Some("Please select output directory".to_string());
+            return;
+        }
+
         match self.check_storage_availability() {
             Ok(_) => {
                 self.sufficient_storage = true;
@@ -94,8 +96,61 @@ impl DeliveryEncoderApp {
         }
     }
 
+    pub fn check_storage_availability(&self) -> Result<f64> {
+        use fs2::available_space;
+
+        // Get output directory path
+        let output_dir = self
+            .output_dir
+            .as_ref()
+            .ok_or_else(|| anyhow!("Output directory not set"))?;
+
+        // Get target resolution dimensions
+        let (width, height) = match self.resolution {
+            Resolution::K2 => (2048, 2048),
+            Resolution::K4 => (4096, 4096),
+            Resolution::K6 => get_resolution(&self.input_video, &self.ffprobe_path)?,
+        };
+
+        // Calculate bytes per frame
+        let bytes_per_frame = (width as u64) * (height as u64) * 4; // 4 bytes per pixel (RGBA)
+
+        // Get video duration and frame rate
+        let duration = get_duration(&self.input_video, &self.ffprobe_path)?;
+        let frame_rate = get_frame_rate(&self.input_video, &self.ffprobe_path)?;
+        let total_frames = (duration * frame_rate).ceil() as u64;
+
+        // Calculate total required space with 20% buffer
+        let required_bytes = bytes_per_frame * total_frames;
+        let required_bytes_with_buffer = (required_bytes as f64 * 1.2) as u64;
+
+        // Get available space
+        let free_space = available_space(output_dir)?;
+
+        // Check if sufficient space is available
+        if free_space < required_bytes_with_buffer {
+            let required_gb = required_bytes_with_buffer as f64 / (1024.0 * 1024.0 * 1024.0);
+            let available_gb = free_space as f64 / (1024.0 * 1024.0 * 1024.0);
+            return Err(anyhow!(
+                "Insufficient storage: {:.2}GB required, {:.2}GB available",
+                required_gb,
+                available_gb
+            ));
+        }
+
+        Ok(required_bytes_with_buffer as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+
     pub fn start_encoding(&mut self) {
         if self.encoding {
+            return;
+        }
+
+        // Validation: Output directory must be set
+        if self.output_dir.is_none() {
+            self.status = "Error: Output directory not set".to_string();
+            self.current_frame =
+                "File: -- | Error: Output directory not set | ETA: --:--".to_string();
             return;
         }
 
@@ -133,10 +188,6 @@ impl DeliveryEncoderApp {
                     overlay_image.display()
                 ),
             ),
-            (
-                std::fs::create_dir_all(&self.output_dir).is_err(),
-                "Error creating output directory".into(),
-            ),
         ];
 
         if let Some((_, error)) = validation_errors.iter().find(|(cond, _)| *cond) {
@@ -164,10 +215,13 @@ impl DeliveryEncoderApp {
         self.encoding = true;
         self.progress = 0.0;
 
+        // Get output directory path
+        let output_dir = self.output_dir.as_ref().unwrap().clone();
+
         // Find existing frames to determine start number
         let mut max_frame = 0;
         let mut found_any = false;
-        if let Ok(entries) = std::fs::read_dir(&self.output_dir) {
+        if let Ok(entries) = std::fs::read_dir(&output_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
@@ -201,11 +255,11 @@ impl DeliveryEncoderApp {
         let config = EncodingConfig {
             input_video,
             overlay_image,
-            output_dir: self.output_dir.clone(),
+            output_dir,
             ffmpeg_path: self.ffmpeg_path.clone(),
             ffprobe_path: self.ffprobe_path.clone(),
             resolution: self.resolution,
-            base_name: self.base_name.clone(), // Use app's base name
+            base_name: self.base_name.clone(),
         };
 
         let frame_sender = progress_sender.clone();
@@ -214,46 +268,6 @@ impl DeliveryEncoderApp {
                 let _ = frame_sender.send((-1.0, 0, format!("Error: {}", e)));
             }
         }));
-    }
-
-    // Storage check function
-    fn check_storage_availability(&self) -> Result<f64> {
-        use fs2::available_space;
-
-        // Get target resolution dimensions
-        let (width, height) = match self.resolution {
-            Resolution::K2 => (2048, 2048),
-            Resolution::K4 => (4096, 4096),
-            Resolution::K6 => get_resolution(&self.input_video, &self.ffprobe_path)?,
-        };
-
-        // Calculate bytes per frame
-        let bytes_per_frame = (width as u64) * (height as u64) * 4; // 4 bytes per pixel (RGBA)
-
-        // Get video duration and frame rate
-        let duration = get_duration(&self.input_video, &self.ffprobe_path)?;
-        let frame_rate = get_frame_rate(&self.input_video, &self.ffprobe_path)?;
-        let total_frames = (duration * frame_rate).ceil() as u64;
-
-        // Calculate total required space with 20% buffer
-        let required_bytes = bytes_per_frame * total_frames;
-        let required_bytes_with_buffer = (required_bytes as f64 * 1.2) as u64;
-
-        // Get available space
-        let free_space = available_space(&self.output_dir)?;
-
-        // Check if sufficient space is available
-        if free_space < required_bytes_with_buffer {
-            let required_gb = required_bytes_with_buffer as f64 / (1024.0 * 1024.0 * 1024.0);
-            let available_gb = free_space as f64 / (1024.0 * 1024.0 * 1024.0);
-            return Err(anyhow!(
-                "Insufficient storage: {:.2}GB required, {:.2}GB available",
-                required_gb,
-                available_gb
-            ));
-        }
-
-        Ok(required_bytes_with_buffer as f64 / (1024.0 * 1024.0 * 1024.0))
     }
 
     pub fn cancel_encoding(&mut self) {
@@ -349,11 +363,14 @@ impl eframe::App for DeliveryEncoderApp {
                     ui.label("Output Directory:");
                     if ui.button("📂 Browse...").clicked() {
                         if let Some(path) = FileDialog::new().pick_folder() {
-                            self.output_dir = path;
+                            self.output_dir = Some(path);
                             self.update_storage_status();
                         }
                     }
-                    ui.label(self.output_dir.display().to_string());
+                    match &self.output_dir {
+                        Some(path) => ui.label(path.display().to_string()),
+                        None => ui.label("Not selected"),
+                    }
                 });
 
                 ui.separator();
@@ -392,8 +409,15 @@ impl eframe::App for DeliveryEncoderApp {
                         }
                     }
 
-                    if ui.button("📂 Open Output Folder").clicked() {
-                        open_folder(&self.output_dir);
+                    // Only enable Open Folder if output directory is set
+                    let open_enabled = self.output_dir.is_some();
+                    if ui
+                        .add_enabled(open_enabled, egui::Button::new("📂 Open Output Folder"))
+                        .clicked()
+                    {
+                        if let Some(path) = &self.output_dir {
+                            open_folder(path);
+                        }
                     }
                 });
             });
