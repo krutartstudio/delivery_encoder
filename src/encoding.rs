@@ -178,7 +178,7 @@ pub fn run_encoding(
                 } else if line.starts_with("out_time_ms") {
                     if let Some((_, time_str)) = line.split_once('=') {
                         if let Ok(out_time_ms) = time_str.parse::<u64>() {
-                            let current_secs = out_time_ms / 1_000_000;
+                            // Remove unused current_secs variable
                             if duration > 0.0 {
                                 let elapsed = start_time.elapsed().as_secs_f32();
                                 if progress_value > 0.1 {

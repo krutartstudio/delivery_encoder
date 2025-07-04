@@ -29,7 +29,7 @@ pub struct DeliveryEncoderApp {
     pub sufficient_storage: bool,
     pub storage_error: Option<String>,
     pub base_name: String,
-    pub has_existing_frames: bool, // New field to track existing frames
+    pub has_existing_frames: bool,
 }
 
 impl DeliveryEncoderApp {
@@ -72,7 +72,7 @@ impl DeliveryEncoderApp {
             sufficient_storage: false,
             storage_error: Some("Please select output directory".to_string()),
             base_name,
-            has_existing_frames: false, // Initialize as false
+            has_existing_frames: false,
         }
     }
 
@@ -80,11 +80,10 @@ impl DeliveryEncoderApp {
         if self.output_dir.is_none() {
             self.sufficient_storage = false;
             self.storage_error = Some("Please select output directory".to_string());
-            self.has_existing_frames = false; // Reset when no directory selected
+            self.has_existing_frames = false;
             return;
         }
 
-        // Check for existing frames in the output directory
         self.has_existing_frames = self.check_for_existing_frames();
 
         match self.check_storage_availability() {
@@ -99,7 +98,6 @@ impl DeliveryEncoderApp {
         }
     }
 
-    // Helper method to check for existing frames
     fn check_for_existing_frames(&self) -> bool {
         if let Some(output_dir) = &self.output_dir {
             if let Ok(entries) = std::fs::read_dir(output_dir) {
@@ -223,7 +221,6 @@ impl DeliveryEncoderApp {
         let output_dir = self.output_dir.as_ref().unwrap().clone();
 
         let mut max_frame = 0;
-        let mut found_any = false;
         if let Ok(entries) = std::fs::read_dir(&output_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -237,7 +234,6 @@ impl DeliveryEncoderApp {
                             if num > max_frame {
                                 max_frame = num;
                             }
-                            found_any = true;
                         }
                     }
                 }
@@ -320,21 +316,18 @@ impl eframe::App for DeliveryEncoderApp {
                 ..Default::default()
             })
             .show(ctx, |ui| {
-                // Disable resolution and browse if encoding or frames exist
                 let disable_settings = self.encoding || self.has_existing_frames;
 
                 // Resolution selection
                 let prev_resolution = self.resolution;
                 ui.horizontal(|ui| {
                     ui.label("Resolution:");
+                    // Disable combo box when needed
                     let mut combo = egui::ComboBox::from_id_source("resolution_combo")
                         .selected_text(self.resolution.as_str());
 
-                    // Disable combo if needed
-                    if disable_settings {
-                        combo = combo.enabled(false);
-                    }
-
+                    // Use ui.set_enabled to disable the entire combo box
+                    ui.set_enabled(!disable_settings);
                     combo.show_ui(ui, |ui| {
                         ui.selectable_value(
                             &mut self.resolution,
@@ -364,7 +357,7 @@ impl eframe::App for DeliveryEncoderApp {
                     ui.label("Output Directory:");
                     let browse_button = egui::Button::new("📂 Browse...");
 
-                    // Conditionally enable/disable browse button
+                    // Use add_enabled for browse button
                     if ui.add_enabled(!disable_settings, browse_button).clicked() {
                         if let Some(path) = FileDialog::new().pick_folder() {
                             self.output_dir = Some(path);
