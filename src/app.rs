@@ -29,14 +29,13 @@ pub struct DeliveryEncoderApp {
     pub sufficient_storage: bool,
     pub storage_error: Option<String>,
     pub base_name: String,
-    pub existing_frames: bool, // Tracks if any frames exist in output directory
+    pub has_existing_frames: bool, // New field to track existing frames
 }
 
 impl DeliveryEncoderApp {
     pub fn new() -> Self {
         let (ffmpeg_path, ffprobe_path, _) = find_ffmpeg();
 
-        // Find first .mov file in assets directory
         let input_video = std::fs::read_dir("assets")
             .and_then(|entries| {
                 entries
@@ -52,7 +51,6 @@ impl DeliveryEncoderApp {
             })
             .unwrap_or_else(|_| PathBuf::from("assets/video.mov"));
 
-        // Get base filename
         let base_name = input_video
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -74,33 +72,20 @@ impl DeliveryEncoderApp {
             sufficient_storage: false,
             storage_error: Some("Please select output directory".to_string()),
             base_name,
-            existing_frames: false, // Initialize as false
+            has_existing_frames: false, // Initialize as false
         }
     }
 
     pub fn update_storage_status(&mut self) {
-        // Only check storage if output directory is set
         if self.output_dir.is_none() {
             self.sufficient_storage = false;
             self.storage_error = Some("Please select output directory".to_string());
-            self.existing_frames = false;
+            self.has_existing_frames = false; // Reset when no directory selected
             return;
         }
 
-        // Check for existing frames
-        self.existing_frames =
-            if let Ok(entries) = std::fs::read_dir(self.output_dir.as_ref().unwrap()) {
-                entries.filter_map(Result::ok).any(|entry| {
-                    let path = entry.path();
-                    if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                        file_name.starts_with(&self.base_name) && file_name.ends_with(".png")
-                    } else {
-                        false
-                    }
-                })
-            } else {
-                false
-            };
+        // Check for existing frames in the output directory
+        self.has_existing_frames = self.check_for_existing_frames();
 
         match self.check_storage_availability() {
             Ok(_) => {
@@ -114,38 +99,46 @@ impl DeliveryEncoderApp {
         }
     }
 
+    // Helper method to check for existing frames
+    fn check_for_existing_frames(&self) -> bool {
+        if let Some(output_dir) = &self.output_dir {
+            if let Ok(entries) = std::fs::read_dir(output_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                        if file_name.starts_with(&self.base_name) && file_name.ends_with(".png") {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     pub fn check_storage_availability(&self) -> Result<f64> {
         use fs2::available_space;
 
-        // Get output directory path
         let output_dir = self
             .output_dir
             .as_ref()
             .ok_or_else(|| anyhow!("Output directory not set"))?;
 
-        // Get target resolution dimensions
         let (width, height) = match self.resolution {
             Resolution::K2 => (2048, 2048),
             Resolution::K4 => (4096, 4096),
             Resolution::K6 => get_resolution(&self.input_video, &self.ffprobe_path)?,
         };
 
-        // Calculate bytes per frame
-        let bytes_per_frame = (width as u64) * (height as u64) * 4; // 4 bytes per pixel (RGBA)
-
-        // Get video duration and frame rate
+        let bytes_per_frame = (width as u64) * (height as u64) * 4;
         let duration = get_duration(&self.input_video, &self.ffprobe_path)?;
         let frame_rate = get_frame_rate(&self.input_video, &self.ffprobe_path)?;
         let total_frames = (duration * frame_rate).ceil() as u64;
-
-        // Calculate total required space with 20% buffer
         let required_bytes = bytes_per_frame * total_frames;
         let required_bytes_with_buffer = (required_bytes as f64 * 1.2) as u64;
 
-        // Get available space
         let free_space = available_space(output_dir)?;
 
-        // Check if sufficient space is available
         if free_space < required_bytes_with_buffer {
             let required_gb = required_bytes_with_buffer as f64 / (1024.0 * 1024.0 * 1024.0);
             let available_gb = free_space as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -164,10 +157,6 @@ impl DeliveryEncoderApp {
             return;
         }
 
-        // Update frame status before starting
-        self.update_storage_status();
-
-        // Validation: Output directory must be set
         if self.output_dir.is_none() {
             self.status = "Error: Output directory not set".to_string();
             self.current_frame =
@@ -175,17 +164,13 @@ impl DeliveryEncoderApp {
             return;
         }
 
-        // Use found input video
         let input_video = self.input_video.clone();
-
-        // Select overlay based on resolution
         let overlay_image = match self.resolution {
             Resolution::K2 => PathBuf::from("assets/overlay_2k.png"),
             Resolution::K4 => PathBuf::from("assets/overlay_4k.png"),
             Resolution::K6 => PathBuf::from("assets/overlay_6k.png"),
         };
 
-        // Validation checks
         let validation_errors = [
             (
                 !self.ffmpeg_path.exists(),
@@ -217,7 +202,6 @@ impl DeliveryEncoderApp {
             return;
         }
 
-        // Storage availability check
         match self.check_storage_availability() {
             Ok(required_gb) => {
                 self.status = format!(
@@ -236,10 +220,8 @@ impl DeliveryEncoderApp {
         self.encoding = true;
         self.progress = 0.0;
 
-        // Get output directory path
         let output_dir = self.output_dir.as_ref().unwrap().clone();
 
-        // Find existing frames to determine start number
         let mut max_frame = 0;
         let mut found_any = false;
         if let Ok(entries) = std::fs::read_dir(&output_dir) {
@@ -262,7 +244,6 @@ impl DeliveryEncoderApp {
             }
         }
 
-        // Generate first file name
         let first_file = format!("{}_{:04}.png", self.base_name, max_frame);
         self.current_frame = format!("File: {} | Starting FFmpeg | ETA: --:--", first_file);
 
@@ -272,7 +253,6 @@ impl DeliveryEncoderApp {
         self.progress_receiver = progress_receiver;
         self.cancel_sender = Some(cancel_sender);
 
-        // Clone only what's needed for the thread
         let config = EncodingConfig {
             input_video,
             overlay_image,
@@ -297,40 +277,30 @@ impl DeliveryEncoderApp {
         }
         self.encoding = false;
         self.status = "Paused".to_string();
-        self.update_storage_status(); // Refresh frame status
     }
 }
 
 impl eframe::App for DeliveryEncoderApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Handle progress updates
         while let Ok((progress, frame, message)) = self.progress_receiver.try_recv() {
-            // Generate file name using app's base name
             let file_name = format!("{}_{:04}.png", self.base_name, frame);
             let full_message = format!("File: {} | {}", file_name, message);
 
             if progress < 0.0 {
-                // Error message
                 self.status = full_message.clone();
                 self.encoding = false;
                 self.current_frame = full_message;
-                self.update_storage_status(); // Refresh frame status
             } else if progress >= 100.0 {
-                // Completion message
                 self.progress = 100.0;
                 self.status = "Done!".to_string();
                 self.encoding = false;
                 self.current_frame = full_message;
-                self.update_storage_status(); // Refresh frame status
             } else {
-                // Update progress percentage
                 self.progress = progress;
-                // Always update the status line with the message
                 self.current_frame = full_message;
             }
         }
 
-        // Clean up finished worker thread
         if let Some(handle) = self.worker_thread.take() {
             if handle.is_finished() {
                 self.cancel_sender = None;
@@ -339,15 +309,10 @@ impl eframe::App for DeliveryEncoderApp {
             }
         }
 
-        // Request continuous repaints during encoding
         if self.encoding {
             ctx.request_repaint();
         }
 
-        // Disable controls during encoding or if frames exist
-        let disable_resolution_and_output = self.encoding || self.existing_frames;
-
-        // Create a frame with padding around the entire UI
         egui::CentralPanel::default()
             .frame(egui::Frame {
                 inner_margin: egui::Margin::symmetric(20.0, 20.0),
@@ -355,6 +320,9 @@ impl eframe::App for DeliveryEncoderApp {
                 ..Default::default()
             })
             .show(ctx, |ui| {
+                // Disable resolution and browse if encoding or frames exist
+                let disable_settings = self.encoding || self.has_existing_frames;
+
                 // Resolution selection
                 let prev_resolution = self.resolution;
                 ui.horizontal(|ui| {
@@ -362,8 +330,8 @@ impl eframe::App for DeliveryEncoderApp {
                     let mut combo = egui::ComboBox::from_id_source("resolution_combo")
                         .selected_text(self.resolution.as_str());
 
-                    // Disable if needed
-                    if disable_resolution_and_output {
+                    // Disable combo if needed
+                    if disable_settings {
                         combo = combo.enabled(false);
                     }
 
@@ -396,17 +364,13 @@ impl eframe::App for DeliveryEncoderApp {
                     ui.label("Output Directory:");
                     let browse_button = egui::Button::new("📂 Browse...");
 
-                    // Disable if needed
-                    if ui
-                        .add_enabled(!disable_resolution_and_output, browse_button)
-                        .clicked()
-                    {
+                    // Conditionally enable/disable browse button
+                    if ui.add_enabled(!disable_settings, browse_button).clicked() {
                         if let Some(path) = FileDialog::new().pick_folder() {
                             self.output_dir = Some(path);
                             self.update_storage_status();
                         }
                     }
-
                     match &self.output_dir {
                         Some(path) => ui.label(path.display().to_string()),
                         None => ui.label("Not selected"),
@@ -415,16 +379,12 @@ impl eframe::App for DeliveryEncoderApp {
 
                 ui.separator();
 
-                // Detailed progress information (includes ETA)
                 ui.label(&self.current_frame);
-
-                // Progress bar with percentage
                 ui.add(
                     egui::ProgressBar::new(self.progress / 100.0)
                         .text(format!("{:.1}%", self.progress)),
                 );
 
-                // Show storage error if exists and not encoding
                 if !self.encoding {
                     if let Some(err) = &self.storage_error {
                         ui.colored_label(egui::Color32::RED, err);
@@ -433,7 +393,6 @@ impl eframe::App for DeliveryEncoderApp {
 
                 ui.add_space(10.0);
 
-                // Action buttons
                 ui.horizontal(|ui| {
                     if self.encoding {
                         if ui.button("⛔ Stop").clicked() {
@@ -449,7 +408,6 @@ impl eframe::App for DeliveryEncoderApp {
                         }
                     }
 
-                    // Only enable Open Folder if output directory is set
                     let open_enabled = self.output_dir.is_some();
                     if ui
                         .add_enabled(open_enabled, egui::Button::new("📂 Open Output Folder"))
