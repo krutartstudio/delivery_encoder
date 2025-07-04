@@ -278,6 +278,34 @@ impl DeliveryEncoderApp {
 
 impl eframe::App for DeliveryEncoderApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Set consistent styling for better accessibility
+        let mut style = (*ctx.style()).clone();
+
+        // Increase text sizes
+        style.text_styles.insert(
+            egui::TextStyle::Body,
+            egui::FontId::new(16.0, egui::FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Button,
+            egui::FontId::new(16.0, egui::FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Heading,
+            egui::FontId::new(20.0, egui::FontFamily::Proportional),
+        );
+
+        // Improve contrast
+        style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(35);
+        style.visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(50);
+        style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(25);
+        style.visuals.window_fill = egui::Color32::from_gray(20);
+        style.visuals.panel_fill = egui::Color32::from_gray(25);
+        style.visuals.faint_bg_color = egui::Color32::from_gray(35);
+
+        ctx.set_style(style);
+
         while let Ok((progress, frame, message)) = self.progress_receiver.try_recv() {
             let file_name = format!("{}_{:04}.png", self.base_name, frame);
             let full_message = format!("File: {} | {}", file_name, message);
@@ -318,6 +346,10 @@ impl eframe::App for DeliveryEncoderApp {
             .show(ctx, |ui| {
                 let disable_settings = self.encoding || self.has_existing_frames;
 
+                // Section title with improved contrast
+                ui.heading("Encoder Settings");
+                ui.add_space(10.0);
+
                 // Resolution selection
                 let prev_resolution = self.resolution;
                 ui.horizontal(|ui| {
@@ -350,12 +382,15 @@ impl eframe::App for DeliveryEncoderApp {
                     self.update_storage_status();
                 }
 
+                ui.add_space(15.0);
                 ui.separator();
+                ui.add_space(15.0);
 
                 // Output Directory
                 ui.horizontal(|ui| {
                     ui.label("Output Directory:");
-                    let browse_button = egui::Button::new("📂 Browse...");
+                    let browse_button = egui::Button::new("📂 Browse...")
+                        .fill(egui::Color32::from_rgb(50, 120, 180));
 
                     // Changed: Only disable during encoding
                     if ui.add_enabled(!self.encoding, browse_button).clicked() {
@@ -370,42 +405,94 @@ impl eframe::App for DeliveryEncoderApp {
                     }
                 });
 
+                ui.add_space(15.0);
                 ui.separator();
+                ui.add_space(15.0);
 
-                ui.label(&self.current_frame);
-                ui.add(
-                    egui::ProgressBar::new(self.progress / 100.0)
-                        .text(format!("{:.1}%", self.progress)),
-                );
+                // Status section with improved visibility
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("Current Status:")
+                            .heading()
+                            .color(egui::Color32::LIGHT_BLUE),
+                    );
+                    ui.add_space(5.0);
+
+                    // Status label with appropriate color coding
+                    let status_color = if self.encoding {
+                        egui::Color32::LIGHT_GREEN
+                    } else if self.progress >= 100.0 {
+                        egui::Color32::GOLD
+                    } else if !self.sufficient_storage {
+                        egui::Color32::LIGHT_RED
+                    } else {
+                        egui::Color32::LIGHT_BLUE
+                    };
+
+                    ui.label(egui::RichText::new(&self.current_frame).color(status_color));
+
+                    ui.add_space(10.0);
+
+                    // Progress bar with improved visibility
+                    let progress_color = if self.encoding {
+                        egui::Color32::from_rgb(0, 180, 100) // Green during encoding
+                    } else if self.progress >= 100.0 {
+                        egui::Color32::GOLD // Gold when complete
+                    } else {
+                        egui::Color32::LIGHT_BLUE // Blue when paused/ready
+                    };
+
+                    ui.add(
+                        egui::ProgressBar::new(self.progress / 100.0)
+                            .fill(progress_color)
+                            .show_percentage()
+                            .text(format!("{:.1}%", self.progress)),
+                    );
+                });
 
                 if !self.encoding {
                     if let Some(err) = &self.storage_error {
-                        ui.colored_label(egui::Color32::RED, err);
+                        ui.add_space(10.0);
+                        ui.colored_label(egui::Color32::LIGHT_RED, err);
                     }
                 }
 
-                ui.add_space(10.0);
+                ui.add_space(20.0);
 
+                // Action buttons with color coding
                 ui.horizontal(|ui| {
                     if self.encoding {
-                        if ui.button("⛔ Stop").clicked() {
+                        let pause_button = egui::Button::new("⏸️ Pause")
+                            .fill(egui::Color32::from_rgb(180, 120, 0)); // Amber pause button
+
+                        if ui.add(pause_button).clicked() {
                             self.cancel_encoding();
                         }
                     } else {
                         let start_enabled = self.sufficient_storage;
-                        if ui
-                            .add_enabled(start_enabled, egui::Button::new("▶ Start Encoding"))
-                            .clicked()
-                        {
+                        let button_color = if start_enabled {
+                            egui::Color32::from_rgb(0, 140, 70) // Green start button
+                        } else {
+                            egui::Color32::GRAY // Gray when disabled
+                        };
+
+                        let start_button = egui::Button::new("▶ Start Encoding").fill(button_color);
+
+                        if ui.add_enabled(start_enabled, start_button).clicked() {
                             self.start_encoding();
                         }
                     }
 
                     let open_enabled = self.output_dir.is_some();
-                    if ui
-                        .add_enabled(open_enabled, egui::Button::new("📂 Open Output Folder"))
-                        .clicked()
-                    {
+                    let button_color = if open_enabled {
+                        egui::Color32::from_rgb(50, 120, 180) // Blue folder button
+                    } else {
+                        egui::Color32::GRAY
+                    };
+
+                    let open_button = egui::Button::new("📂 Open Output Folder").fill(button_color);
+
+                    if ui.add_enabled(open_enabled, open_button).clicked() {
                         if let Some(path) = &self.output_dir {
                             open_folder(path);
                         }
