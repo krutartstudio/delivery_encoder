@@ -437,7 +437,7 @@ impl eframe::App for DeliveryEncoderApp {
                 ui.horizontal(|ui| {
                     ui.label("Output Directory:");
                     let browse_button = egui::Button::new("📂 Browse...")
-                        .fill(egui::Color32::from_rgb(50, 160, 180));
+                        .fill(egui::Color32::from_rgb(30, 90, 100));
 
                     // Changed: Only disable during encoding
                     if ui.add_enabled(!self.encoding, browse_button).clicked() {
@@ -508,14 +508,8 @@ impl eframe::App for DeliveryEncoderApp {
 
                 // Action buttons with color coding
                 ui.horizontal(|ui| {
-                    if self.encoding {
-                        let cancel_button = egui::Button::new("⏹ Cancel")
-                            .fill(egui::Color32::from_rgb(180, 80, 80)); // Red color for cancel
-
-                        if ui.add(cancel_button).clicked() {
-                            self.cancel_encoding_with_dialog();
-                        }
-                    } else {
+                    // Start/Resume Encoding button
+                    if !self.encoding {
                         let start_enabled = self.sufficient_storage;
                         let button_color = if start_enabled {
                             egui::Color32::from_rgb(0, 140, 70) // Green start button
@@ -524,12 +518,12 @@ impl eframe::App for DeliveryEncoderApp {
                         };
 
                         let start_button = egui::Button::new("▶ Start Encoding").fill(button_color);
-
                         if ui.add_enabled(start_enabled, start_button).clicked() {
                             self.start_encoding();
                         }
                     }
 
+                    // Open Output Folder button
                     let open_enabled = self.output_dir.is_some();
                     let button_color = if open_enabled {
                         egui::Color32::from_rgb(50, 120, 180) // Blue folder button
@@ -538,10 +532,19 @@ impl eframe::App for DeliveryEncoderApp {
                     };
 
                     let open_button = egui::Button::new("📂 Open Output Folder").fill(button_color);
-
                     if ui.add_enabled(open_enabled, open_button).clicked() {
                         if let Some(path) = &self.output_dir {
                             open_folder(path);
+                        }
+                    }
+
+                    // Add: Cancel button (only visible during encoding)
+                    if self.encoding {
+                        let cancel_button = egui::Button::new("⏹ Cancel")
+                            .fill(egui::Color32::from_rgb(180, 80, 80)); // Red color for cancel
+
+                        if ui.add(cancel_button).clicked() {
+                            self.cancel_encoding_with_dialog();
                         }
                     }
                 });
