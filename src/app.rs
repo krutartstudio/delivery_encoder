@@ -17,6 +17,7 @@ use crate::{
 enum DialogState {
     None,
     CancelConfirmation,
+    CancelAndDeleteConfirmation,
 }
 
 pub struct DeliveryEncoderApp {
@@ -275,10 +276,6 @@ impl DeliveryEncoderApp {
         }));
     }
 
-    pub fn cancel_encoding_with_dialog(&mut self) {
-        self.dialog_state = DialogState::CancelConfirmation;
-    }
-
     pub fn cancel_encoding(&mut self, delete_frames: bool) {
         // Send cancel signal to encoding thread
         if let Some(sender) = self.cancel_sender.take() {
@@ -484,7 +481,7 @@ impl eframe::App for DeliveryEncoderApp {
                     let progress_color = if self.encoding {
                         egui::Color32::from_rgb(0, 180, 100) // Green during encoding
                     } else if self.progress >= 100.0 {
-                        egui::Color32::GOLD // Gold when complete
+                        egui::Color32::DARK_GREEN
                     } else {
                         egui::Color32::LIGHT_BLUE // Blue when paused/ready
                     };
@@ -538,21 +535,41 @@ impl eframe::App for DeliveryEncoderApp {
                         }
                     }
 
-                    // Add: Cancel button (only visible during encoding)
+                    // NEW: Encoding action buttons
                     if self.encoding {
-                        let cancel_button = egui::Button::new("⏹ Cancel")
-                            .fill(egui::Color32::from_rgb(180, 80, 80)); // Red color for cancel
+                        // Pause button
+                        let pause_button = egui::Button::new("⏸ Pause")
+                            .fill(egui::Color32::from_rgb(100, 100, 180)); // Purple
+                        if ui.add(pause_button).clicked() {
+                            self.cancel_encoding(false);
+                        }
 
+                        // Cancel button
+                        let cancel_button = egui::Button::new("⏹ Cancel")
+                            .fill(egui::Color32::from_rgb(180, 100, 80)); // Orange
                         if ui.add(cancel_button).clicked() {
-                            self.cancel_encoding_with_dialog();
+                            self.dialog_state = DialogState::CancelConfirmation;
+                        }
+
+                        // Cancel and Delete button
+                        let cancel_delete_button = egui::Button::new("🗑 Cancel and Delete")
+                            .fill(egui::Color32::from_rgb(180, 80, 80)); // Red
+                        if ui.add(cancel_delete_button).clicked() {
+                            self.dialog_state = DialogState::CancelAndDeleteConfirmation;
                         }
                     }
                 });
             });
 
         // Draw the cancellation confirmation dialog if active
-        if self.dialog_state == DialogState::CancelConfirmation {
-            egui::Window::new("Cancel Encoding?")
+        if self.dialog_state != DialogState::None {
+            let title = match self.dialog_state {
+                DialogState::CancelConfirmation => "Cancel Encoding?",
+                DialogState::CancelAndDeleteConfirmation => "Cancel and Delete Encoding?",
+                _ => "",
+            };
+
+            egui::Window::new(title)
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -560,17 +577,23 @@ impl eframe::App for DeliveryEncoderApp {
                     ui.vertical_centered(|ui| {
                         ui.label("Are you sure you want to cancel encoding?");
                         ui.add_space(10.0);
-                        ui.label("Delete already generated frames?");
-                        ui.add_space(10.0);
 
                         ui.horizontal(|ui| {
-                            if ui.button("Yes, delete frames").clicked() {
-                                self.cancel_encoding(true);
+                            // Red "Yes" button
+                            if ui.button("Yes").fill(egui::Color32::RED).clicked() {
+                                match self.dialog_state {
+                                    DialogState::CancelConfirmation => {
+                                        self.cancel_encoding(false);
+                                    }
+                                    DialogState::CancelAndDeleteConfirmation => {
+                                        self.cancel_encoding(true);
+                                    }
+                                    _ => {}
+                                }
                             }
-                            if ui.button("No, keep frames").clicked() {
-                                self.cancel_encoding(false);
-                            }
-                            if ui.button("No, continue").clicked() {
+
+                            // Grey "No" button
+                            if ui.button("No").fill(egui::Color32::GRAY).clicked() {
                                 self.dialog_state = DialogState::None;
                             }
                         });
