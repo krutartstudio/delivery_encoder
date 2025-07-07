@@ -471,7 +471,7 @@ impl eframe::App for DeliveryEncoderApp {
                     let status_color = if self.encoding {
                         egui::Color32::LIGHT_GREEN
                     } else if self.progress >= 100.0 {
-                        egui::Color32::GOLD
+                        egui::Color32::DARK_GREEN
                     } else if !self.sufficient_storage {
                         egui::Color32::LIGHT_RED
                     } else {
@@ -486,7 +486,7 @@ impl eframe::App for DeliveryEncoderApp {
                     let progress_color = if self.encoding {
                         egui::Color32::from_rgb(0, 180, 100) // Green during encoding
                     } else if self.progress >= 100.0 {
-                        egui::Color32::GOLD // Gold when complete
+                        egui::Color32::DARK_GREEN 
                     } else {
                         egui::Color32::LIGHT_BLUE // Blue when paused/ready
                     };
