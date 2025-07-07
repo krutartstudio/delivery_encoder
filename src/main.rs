@@ -27,7 +27,7 @@ fn main() -> Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([550.0, 450.0]) // Increased height for better spacing
+            .with_inner_size([550.0, 580.0]) // Increased height for better spacing
             .with_icon(icon), // Set the icon here
         ..Default::default()
     };
