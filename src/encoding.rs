@@ -37,7 +37,7 @@ pub fn run_encoding(
 
     let total_frames = (duration * frame_rate).ceil() as u32;
 
-    let output_pattern = format!("{}_%04d.png", config.base_name);
+    let output_pattern = format!("{}-%04d.png", config.base_name);
     let output_path = config.output_dir.join(&output_pattern);
 
     let mut max_frame = 0;
