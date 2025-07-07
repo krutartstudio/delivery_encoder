@@ -13,10 +13,11 @@ use crate::{
     utils::{find_ffmpeg, get_duration, get_frame_rate, get_resolution, open_folder},
 };
 
+// Make enum public to match field visibility
 #[derive(Debug, Clone, PartialEq)]
-enum DialogState {
+pub enum DialogState {
     None,
-    CancelConfirmation(bool), // bool indicates if deletion is requested
+    CancelConfirmation(bool),
 }
 
 pub struct DeliveryEncoderApp {
@@ -37,7 +38,7 @@ pub struct DeliveryEncoderApp {
     pub base_name: String,
     pub has_existing_frames: bool,
     pub dialog_state: DialogState,
-    pub instructions: String, // NEW: Added field for instructions
+    pub instructions: String,
 }
 
 impl DeliveryEncoderApp {
@@ -64,7 +65,6 @@ impl DeliveryEncoderApp {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "video".to_string());
 
-        // NEW: Load instructions from assets/instrukce.md
         let instructions = std::fs::read_to_string("assets/instrukce.md")
             .map(|content| {
                 content
@@ -94,7 +94,7 @@ impl DeliveryEncoderApp {
             base_name,
             has_existing_frames: false,
             dialog_state: DialogState::None,
-            instructions, // NEW: Store instructions
+            instructions,
         }
     }
 
@@ -296,12 +296,10 @@ impl DeliveryEncoderApp {
     }
 
     pub fn cancel_encoding(&mut self, delete_frames: bool) {
-        // Send cancel signal to encoding thread
         if let Some(sender) = self.cancel_sender.take() {
             let _ = sender.send(());
         }
 
-        // Delete frames if requested
         if delete_frames {
             if let Some(output_dir) = &self.output_dir {
                 if let Ok(entries) = std::fs::read_dir(output_dir) {
@@ -318,7 +316,6 @@ impl DeliveryEncoderApp {
             }
         }
 
-        // Reset app state
         self.encoding = false;
         self.status = "Ready".to_string();
         self.progress = 0.0;
@@ -331,10 +328,8 @@ impl DeliveryEncoderApp {
 
 impl eframe::App for DeliveryEncoderApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Set consistent styling for better accessibility
         let mut style = (*ctx.style()).clone();
 
-        // Increase text sizes
         style.text_styles.insert(
             egui::TextStyle::Body,
             egui::FontId::new(16.0, egui::FontFamily::Proportional),
@@ -348,7 +343,6 @@ impl eframe::App for DeliveryEncoderApp {
             egui::FontId::new(20.0, egui::FontFamily::Proportional),
         );
 
-        // Set dark theme with high contrast
         style.visuals = egui::Visuals::dark();
         style.visuals.widgets.noninteractive.bg_fill = egui::Color32::from_gray(25);
         style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(35);
@@ -358,7 +352,6 @@ impl eframe::App for DeliveryEncoderApp {
         style.visuals.panel_fill = egui::Color32::from_gray(25);
         style.visuals.faint_bg_color = egui::Color32::from_gray(35);
 
-        // FIX: Set text color through noninteractive widgets
         style.visuals.widgets.noninteractive.fg_stroke =
             egui::Stroke::new(1.0, egui::Color32::from_gray(230));
         style.visuals.widgets.inactive.fg_stroke =
@@ -403,28 +396,19 @@ impl eframe::App for DeliveryEncoderApp {
 
         egui::CentralPanel::default()
             .frame(egui::Frame {
-                // Increased padding (1.5x)
                 inner_margin: egui::Margin::symmetric(30.0, 30.0),
                 fill: ctx.style().visuals.panel_fill,
                 ..Default::default()
             })
             .show(ctx, |ui| {
-                // Fix: prefix with underscore to suppress unused variable warning
-                let _disable_settings = self.encoding || self.has_existing_frames;
-
-                // Section title with improved contrast
                 ui.heading("Encoder Settings");
                 ui.add_space(10.0);
 
-                // Resolution selection
-                let prev_resolution = self.resolution;
                 ui.horizontal(|ui| {
                     ui.label("Resolution:");
-                    // Disable combo box when needed
                     let combo = egui::ComboBox::from_id_source("resolution_combo")
                         .selected_text(self.resolution.as_str());
 
-                    // Changed: Only disable during encoding
                     ui.set_enabled(!self.encoding);
                     combo.show_ui(ui, |ui| {
                         ui.selectable_value(
@@ -444,18 +428,13 @@ impl eframe::App for DeliveryEncoderApp {
                         );
                     });
                 });
-                if prev_resolution != self.resolution {
-                    self.update_storage_status();
-                }
 
-                // Output Directory - placed right after resolution
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.label("Output Directory:");
                     let browse_button = egui::Button::new("📂 Browse...")
                         .fill(egui::Color32::from_rgb(30, 90, 100));
 
-                    // Changed: Only disable during encoding
                     if ui.add_enabled(!self.encoding, browse_button).clicked() {
                         if let Some(path) = FileDialog::new().pick_folder() {
                             self.output_dir = Some(path);
@@ -472,7 +451,6 @@ impl eframe::App for DeliveryEncoderApp {
                 ui.separator();
                 ui.add_space(20.0);
 
-                // Status section with improved visibility
                 ui.vertical(|ui| {
                     ui.label(
                         egui::RichText::new("Current Status:")
@@ -481,7 +459,6 @@ impl eframe::App for DeliveryEncoderApp {
                     );
                     ui.add_space(5.0);
 
-                    // Status label with appropriate color coding
                     let status_color = if self.encoding {
                         egui::Color32::LIGHT_GREEN
                     } else if self.progress >= 100.0 {
@@ -496,13 +473,12 @@ impl eframe::App for DeliveryEncoderApp {
 
                     ui.add_space(10.0);
 
-                    // Progress bar with improved visibility
                     let progress_color = if self.encoding {
-                        egui::Color32::from_rgb(0, 180, 100) // Green during encoding
+                        egui::Color32::from_rgb(0, 180, 100)
                     } else if self.progress >= 100.0 {
                         egui::Color32::DARK_GREEN
                     } else {
-                        egui::Color32::LIGHT_BLUE // Blue when paused/ready
+                        egui::Color32::LIGHT_BLUE
                     };
 
                     ui.add(
@@ -522,36 +498,31 @@ impl eframe::App for DeliveryEncoderApp {
 
                 ui.add_space(20.0);
 
-                // Action buttons with color coding
                 ui.horizontal(|ui| {
                     if self.encoding {
-                        // Pause button
                         let pause_button = egui::Button::new("⏸ Pause")
-                            .fill(egui::Color32::from_rgb(200, 150, 50)); // Orange
+                            .fill(egui::Color32::from_rgb(200, 150, 50));
                         if ui.add(pause_button).clicked() {
                             self.pause_encoding();
                         }
 
-                        // Cancel button
                         let cancel_button = egui::Button::new("⏹ Cancel")
-                            .fill(egui::Color32::from_rgb(180, 80, 80)); // Red
+                            .fill(egui::Color32::from_rgb(180, 80, 80));
                         if ui.add(cancel_button).clicked() {
                             self.dialog_state = DialogState::CancelConfirmation(false);
                         }
 
-                        // Cancel and Delete button
                         let cancel_delete_button = egui::Button::new("⏹ Cancel and Delete")
-                            .fill(egui::Color32::from_rgb(150, 40, 40)); // Dark red
+                            .fill(egui::Color32::from_rgb(150, 40, 40));
                         if ui.add(cancel_delete_button).clicked() {
                             self.dialog_state = DialogState::CancelConfirmation(true);
                         }
                     } else {
-                        // Start/Resume Encoding button
                         let start_enabled = self.sufficient_storage;
                         let button_color = if start_enabled {
-                            egui::Color32::from_rgb(0, 140, 70) // Green start button
+                            egui::Color32::from_rgb(0, 140, 70)
                         } else {
-                            egui::Color32::GRAY // Gray when disabled
+                            egui::Color32::GRAY
                         };
 
                         let start_button = egui::Button::new("▶ Start Encoding").fill(button_color);
@@ -560,10 +531,9 @@ impl eframe::App for DeliveryEncoderApp {
                         }
                     }
 
-                    // Open Output Folder button
                     let open_enabled = self.output_dir.is_some();
                     let button_color = if open_enabled {
-                        egui::Color32::from_rgb(50, 120, 180) // Blue folder button
+                        egui::Color32::from_rgb(50, 120, 180)
                     } else {
                         egui::Color32::GRAY
                     };
@@ -576,7 +546,6 @@ impl eframe::App for DeliveryEncoderApp {
                     }
                 });
 
-                // NEW: Add instructions section at the bottom
                 if !self.instructions.is_empty() {
                     ui.add_space(20.0);
                     ui.separator();
@@ -594,7 +563,6 @@ impl eframe::App for DeliveryEncoderApp {
                 }
             });
 
-        // Draw the cancellation confirmation dialog if active
         if let DialogState::CancelConfirmation(delete_frames) = self.dialog_state {
             egui::Window::new("Cancel Encoding?")
                 .collapsible(false)
@@ -606,7 +574,6 @@ impl eframe::App for DeliveryEncoderApp {
                         ui.add_space(10.0);
 
                         ui.horizontal(|ui| {
-                            // Red "Yes" button
                             if ui
                                 .add(
                                     egui::Button::new("Yes")
@@ -617,7 +584,6 @@ impl eframe::App for DeliveryEncoderApp {
                                 self.cancel_encoding(delete_frames);
                             }
 
-                            // Grey "No" button
                             if ui
                                 .add(egui::Button::new("No").fill(egui::Color32::GRAY))
                                 .clicked()
