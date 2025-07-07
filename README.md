@@ -12,9 +12,9 @@ _____
 - [prod] cargo build --release
 _____
 
-app.rs controls gui and launches
-encoding.rs is ffmpeg mainly
-main.rs encompasses all
-models.rs contains resolution settings
-utils.rs has all the progress, eta etc...functionalities.
+- app.rs controls gui and launches
+- encoding.rs is ffmpeg mainly
+- main.rs encompasses all
+- models.rs contains resolution settings
+- utils.rs has all the progress, eta etc...functionalities.
 _____
