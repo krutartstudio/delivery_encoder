@@ -37,6 +37,7 @@ pub struct DeliveryEncoderApp {
     pub base_name: String,
     pub has_existing_frames: bool,
     pub dialog_state: DialogState,
+    pub instructions: String, // NEW: Added field for instructions
 }
 
 impl DeliveryEncoderApp {
@@ -63,6 +64,18 @@ impl DeliveryEncoderApp {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "video".to_string());
 
+        // NEW: Load instructions from assets/instrukce.md
+        let instructions = std::fs::read_to_string("assets/instrukce.md")
+            .map(|content| {
+                content
+                    .split("### instrukce ###")
+                    .nth(1)
+                    .unwrap_or("No instructions found.")
+                    .trim()
+                    .to_string()
+            })
+            .unwrap_or_else(|_| "Could not load instructions.".to_string());
+
         Self {
             output_dir: None,
             status: "Ready".to_string(),
@@ -81,6 +94,7 @@ impl DeliveryEncoderApp {
             base_name,
             has_existing_frames: false,
             dialog_state: DialogState::None,
+            instructions, // NEW: Store instructions
         }
     }
 
@@ -486,7 +500,7 @@ impl eframe::App for DeliveryEncoderApp {
                     let progress_color = if self.encoding {
                         egui::Color32::from_rgb(0, 180, 100) // Green during encoding
                     } else if self.progress >= 100.0 {
-                        egui::Color32::DARK_GREEN 
+                        egui::Color32::DARK_GREEN
                     } else {
                         egui::Color32::LIGHT_BLUE // Blue when paused/ready
                     };
@@ -561,6 +575,23 @@ impl eframe::App for DeliveryEncoderApp {
                         }
                     }
                 });
+
+                // NEW: Add instructions section at the bottom
+                if !self.instructions.is_empty() {
+                    ui.add_space(20.0);
+                    ui.separator();
+                    ui.add_space(10.0);
+
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("Instructions:")
+                                .heading()
+                                .color(egui::Color32::LIGHT_YELLOW),
+                        );
+                        ui.add_space(5.0);
+                        ui.label(&self.instructions);
+                    });
+                }
             });
 
         // Draw the cancellation confirmation dialog if active
