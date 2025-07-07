@@ -13,11 +13,10 @@ mod utils;
 use app::DeliveryEncoderApp;
 
 fn main() -> Result<()> {
-    // Load icon data from assets
     let icon_bytes = include_bytes!("../assets/krutart.rgba");
-    // We assume the icon is 256x256 (common icon size)
+
     let (icon_width, icon_height) = (256, 256);
-    let icon_rgba = icon_bytes.to_vec(); // Convert to Vec<u8>
+    let icon_rgba = icon_bytes.to_vec();
 
     let icon = IconData {
         rgba: icon_rgba,
@@ -27,8 +26,8 @@ fn main() -> Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([550.0, 580.0]) // Increased height for better spacing
-            .with_icon(icon), // Set the icon here
+            .with_inner_size([550.0, 580.0])
+            .with_icon(icon),
         ..Default::default()
     };
 

@@ -1,4 +1,3 @@
-// Resolution options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Resolution {
     K2,

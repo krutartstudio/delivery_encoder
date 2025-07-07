@@ -35,14 +35,11 @@ pub fn run_encoding(
     let resolution = get_resolution(&config.input_video, &config.ffprobe_path)?;
     let (width, height) = (resolution.0, resolution.1);
 
-    // Calculate total frames for overall progress
     let total_frames = (duration * frame_rate).ceil() as u32;
 
-    // Create output pattern using base name
     let output_pattern = format!("{}_%04d.png", config.base_name);
     let output_path = config.output_dir.join(&output_pattern);
 
-    // Find existing frames to determine start number
     let mut max_frame = 0;
     let mut found_any = false;
     if let Ok(entries) = std::fs::read_dir(&config.output_dir) {
@@ -65,7 +62,6 @@ pub fn run_encoding(
         }
     }
 
-    // Calculate start time for FFmpeg seeking
     let start_frame = if found_any { max_frame } else { 0 };
     let start_time_secs = start_frame as f32 / frame_rate;
     let start_time_str = format!("{:.3}", start_time_secs);
@@ -73,7 +69,6 @@ pub fn run_encoding(
     let temp_progress = tempfile::NamedTempFile::new()?;
     let progress_path = temp_progress.path().to_path_buf();
 
-    // Handle resolution scaling
     let (target_width, target_height) = match config.resolution.target_size() {
         Some((w, h)) => (w, h),
         None => (width, height),
@@ -114,11 +109,10 @@ pub fn run_encoding(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    // Spawn FFmpeg with hidden window on Windows
     let mut child = {
         #[cfg(windows)]
         {
-            cmd.creation_flags(0x08000000).spawn()? // CREATE_NO_WINDOW
+            cmd.creation_flags(0x08000000).spawn()?
         }
         #[cfg(not(windows))]
         {
@@ -128,14 +122,12 @@ pub fn run_encoding(
 
     let start_time = Instant::now();
 
-    // Calculate initial progress percentage
     let initial_progress = if total_frames > 0 {
         (start_frame as f32 / total_frames as f32 * 100.0).min(100.0)
     } else {
         0.0
     };
 
-    // Send immediate update that FFmpeg has started
     let _ = progress_sender.send((
         initial_progress,
         start_frame,
@@ -145,19 +137,16 @@ pub fn run_encoding(
         ),
     ));
 
-    // Track last frame and ETA for consistent status
     let mut last_eta = "--:--".to_string();
     let mut last_frame = start_frame;
 
     while child.try_wait()?.is_none() {
-        // Handle cancel requests
         if cancel_receiver.try_recv().is_ok() {
             child.kill()?;
             let _ = progress_sender.send((-2.0, last_frame, format!("Paused | ETA: {}", last_eta)));
             return Ok(());
         }
 
-        // Read and parse progress file
         if let Ok(contents) = std::fs::read_to_string(&progress_path) {
             let mut progress_value = initial_progress;
 
@@ -165,10 +154,8 @@ pub fn run_encoding(
                 if line.starts_with("frame=") {
                     if let Some(frame_str) = line.split('=').nth(1) {
                         if let Ok(frame_index) = frame_str.trim().parse::<u32>() {
-                            // Frame number is absolute since we're using start_number
                             last_frame = start_frame + frame_index;
 
-                            // Calculate overall progress percentage
                             if total_frames > 0 {
                                 progress_value =
                                     (last_frame as f32 / total_frames as f32 * 100.0).min(100.0);
@@ -177,13 +164,10 @@ pub fn run_encoding(
                     }
                 } else if line.starts_with("out_time_ms") {
                     if let Some((_, time_str)) = line.split_once('=') {
-                        // Mark as intentionally unused since we're using progress-based ETA
                         if let Ok(_out_time_ms) = time_str.parse::<u64>() {
-                            // Remove unused current_secs variable
                             if duration > 0.0 {
                                 let elapsed = start_time.elapsed().as_secs_f32();
                                 if progress_value > 0.1 {
-                                    // Calculate ETA based on overall progress
                                     let total_estimated = (elapsed * 100.0) / progress_value;
                                     let eta_secs = (total_estimated - elapsed) as u64;
                                     last_eta = format!("{:02}:{:02}", eta_secs / 60, eta_secs % 60);
@@ -196,7 +180,6 @@ pub fn run_encoding(
                 }
             }
 
-            // Create detailed log without file name
             let detailed_log = if config.resolution != Resolution::K6 {
                 format!(
                     "Processing | Res: {}x{} | ETA: {}",
@@ -206,17 +189,14 @@ pub fn run_encoding(
                 format!("Processing | Res: {}x{} | ETA: {}", width, height, last_eta)
             };
 
-            // Send detailed log update with absolute frame number
             let _ = progress_sender.send((progress_value, last_frame, detailed_log));
         }
 
         thread::sleep(Duration::from_millis(200));
     }
 
-    // Final check after process completes
     let status = child.wait()?;
     if status.success() {
-        // Final detailed status with file name and ETA
         let detailed_log = if config.resolution != Resolution::K6 {
             format!(
                 "Processing | Res: {}x{} | ETA: 00:00",
