@@ -46,16 +46,12 @@ pub fn run_encoding(
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                // Match files with base name followed by HYPHEN
-                if file_name.starts_with(&config.base_name)
-                    && file_name.contains('-')
-                    && file_name.ends_with(".png")
-                {
-                    let num_part = file_name
+                if file_name.starts_with(&config.base_name) && file_name.ends_with(".png") {
+                    let num_str = file_name
                         .trim_start_matches(&config.base_name)
-                        .trim_start_matches('-') // Changed to hyphen
+                        .trim_start_matches('_')
                         .trim_end_matches(".png");
-                    if let Ok(num) = num_part.parse::<u32>() {
+                    if let Ok(num) = num_str.parse::<u32>() {
                         if num > max_frame {
                             max_frame = num;
                         }
