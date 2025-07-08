@@ -170,12 +170,16 @@ impl DeliveryEncoderApp {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                    if file_name.starts_with(&self.base_name) && file_name.ends_with(".png") {
-                        let num_str = file_name
+                    // Match files with base name followed by HYPHEN
+                    if file_name.starts_with(&self.base_name)
+                        && file_name.contains('-')
+                        && file_name.ends_with(".png")
+                    {
+                        let num_part = file_name
                             .trim_start_matches(&self.base_name)
-                            .trim_start_matches('_')
+                            .trim_start_matches('-') // Changed to hyphen
                             .trim_end_matches(".png");
-                        if let Ok(num) = num_str.parse::<u32>() {
+                        if let Ok(num) = num_part.parse::<u32>() {
                             if num > max_frame {
                                 max_frame = num;
                             }
@@ -185,8 +189,8 @@ impl DeliveryEncoderApp {
             }
         }
 
-        // Generate first file name
-        let first_file = format!("{}_{:04}.png", self.base_name, max_frame);
+        // Generate first file name with HYPHEN
+        let first_file = format!("{}-{:04}.png", self.base_name, max_frame);
         self.current_frame = format!("File: {} | Starting FFmpeg | ETA: --:--", first_file);
 
         let (progress_sender, progress_receiver) = std::sync::mpsc::channel();
@@ -267,8 +271,8 @@ impl eframe::App for DeliveryEncoderApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Handle progress updates
         while let Ok((progress, frame, message)) = self.progress_receiver.try_recv() {
-            // Generate file name using app's base name
-            let file_name = format!("{}_{:04}.png", self.base_name, frame);
+            // Generate file name with HYPHEN
+            let file_name = format!("{}-{:04}.png", self.base_name, frame);
             let full_message = format!("File: {} | {}", file_name, message);
 
             if progress < 0.0 {

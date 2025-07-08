@@ -36,8 +36,8 @@ pub fn run_encoding(
     // Get frame rate for seeking
     let frame_rate = get_frame_rate(&config.input_video, &config.ffprobe_path)?;
 
-    // Create output pattern using base name
-    let output_pattern = format!("{}_%04d.png", config.base_name);
+    // Create output pattern using base name with HYPHEN
+    let output_pattern = format!("{}-%04d.png", config.base_name);
     let output_path = config.output_dir.join(&output_pattern);
 
     // Find existing frames to determine start number
@@ -46,12 +46,16 @@ pub fn run_encoding(
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                if file_name.starts_with(&config.base_name) && file_name.ends_with(".png") {
-                    let num_str = file_name
+                // Match files with base name followed by HYPHEN
+                if file_name.starts_with(&config.base_name)
+                    && file_name.contains('-')
+                    && file_name.ends_with(".png")
+                {
+                    let num_part = file_name
                         .trim_start_matches(&config.base_name)
-                        .trim_start_matches('_')
+                        .trim_start_matches('-') // Changed to hyphen
                         .trim_end_matches(".png");
-                    if let Ok(num) = num_str.parse::<u32>() {
+                    if let Ok(num) = num_part.parse::<u32>() {
                         if num > max_frame {
                             max_frame = num;
                         }
