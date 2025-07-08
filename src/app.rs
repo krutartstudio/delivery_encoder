@@ -127,12 +127,7 @@ impl DeliveryEncoderApp {
                     let path = entry.path();
                     if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
                         if file_name.starts_with(&self.base_name) && file_name.ends_with(".png") {
-                            // Fixed pattern detection: use '-' instead of '_'
-                            if let Some((prefix, _)) = file_name.split_once('-') {
-                                if prefix == self.base_name {
-                                    return true;
-                                }
-                            }
+                            return true;
                         }
                     }
                 }
@@ -253,14 +248,13 @@ impl DeliveryEncoderApp {
                 let path = entry.path();
                 if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
                     if file_name.starts_with(&self.base_name) && file_name.ends_with(".png") {
-                        // Fixed pattern detection: use '-' instead of '_'
-                        if let Some((prefix, num_str)) = file_name.split_once('-') {
-                            if prefix == self.base_name {
-                                if let Ok(num) = num_str.trim_end_matches(".png").parse::<u32>() {
-                                    if num > max_frame {
-                                        max_frame = num;
-                                    }
-                                }
+                        let num_str = file_name
+                            .trim_start_matches(&self.base_name)
+                            .trim_start_matches('_')
+                            .trim_end_matches(".png");
+                        if let Ok(num) = num_str.parse::<u32>() {
+                            if num > max_frame {
+                                max_frame = num;
                             }
                         }
                     }
@@ -268,8 +262,7 @@ impl DeliveryEncoderApp {
             }
         }
 
-        // Fixed file name format: use '-' instead of '_'
-        let first_file = format!("{}-{:04}.png", self.base_name, max_frame);
+        let first_file = format!("{}_{:04}.png", self.base_name, max_frame);
         self.current_frame = format!("File: {} | Starting FFmpeg | ETA: --:--", first_file);
 
         let (progress_sender, progress_receiver) = std::sync::mpsc::channel();
@@ -313,13 +306,9 @@ impl DeliveryEncoderApp {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                            if file_name.starts_with(&self.base_name) && file_name.ends_with(".png") {
-                                // Fixed pattern detection: use '-' instead of '_'
-                                if let Some((prefix, _)) = file_name.split_once('-') {
-                                    if prefix == self.base_name {
-                                        let _ = std::fs::remove_file(&path);
-                                    }
-                                }
+                            if file_name.starts_with(&self.base_name) && file_name.ends_with(".png")
+                            {
+                                let _ = std::fs::remove_file(&path);
                             }
                         }
                     }
@@ -375,8 +364,7 @@ impl eframe::App for DeliveryEncoderApp {
         ctx.set_style(style);
 
         while let Ok((progress, frame, message)) = self.progress_receiver.try_recv() {
-            // Fixed file name format: use '-' instead of '_'
-            let file_name = format!("{}-{:04}.png", self.base_name, frame);
+            let file_name = format!("{}_{:04}.png", self.base_name, frame);
             let full_message = format!("File: {} | {}", file_name, message);
 
             if progress < 0.0 {
