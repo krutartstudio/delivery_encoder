@@ -27,10 +27,9 @@ pub fn find_ffmpeg() -> (PathBuf, PathBuf, String) {
         ("ffmpeg", "ffprobe")
     };
 
-    // Check common locations
     let locations = [
         PathBuf::from(ffmpeg_name),
-        PathBuf::from("assets").join("ffmpeg").join(ffmpeg_name), // Updated path
+        PathBuf::from("assets").join("ffmpeg").join(ffmpeg_name),
         PathBuf::from("ffmpeg").join(ffmpeg_name),
     ];
 
@@ -41,7 +40,6 @@ pub fn find_ffmpeg() -> (PathBuf, PathBuf, String) {
         }
     }
 
-    // Check system PATH
     if let Ok(path) = env::var("PATH") {
         for dir in env::split_paths(&path) {
             let ffmpeg_path = dir.join(ffmpeg_name);
@@ -52,7 +50,6 @@ pub fn find_ffmpeg() -> (PathBuf, PathBuf, String) {
         }
     }
 
-    // Default to executable names
     (
         PathBuf::from(ffmpeg_name),
         PathBuf::from(ffprobe_name),
@@ -84,7 +81,7 @@ pub fn get_resolution(input: &Path, ffprobe_path: &Path) -> Result<(u32, u32)> {
     let output = {
         #[cfg(windows)]
         {
-            command.creation_flags(0x08000000).output()? // CREATE_NO_WINDOW
+            command.creation_flags(0x08000000).output()?
         }
         #[cfg(not(windows))]
         {
@@ -133,7 +130,7 @@ pub fn get_duration(input: &Path, ffprobe_path: &Path) -> Result<f32> {
     let output = {
         #[cfg(windows)]
         {
-            command.creation_flags(0x08000000).output()? // CREATE_NO_WINDOW
+            command.creation_flags(0x08000000).output()?
         }
         #[cfg(not(windows))]
         {
@@ -178,7 +175,7 @@ pub fn get_frame_rate(input: &Path, ffprobe_path: &Path) -> Result<f32> {
     let output = {
         #[cfg(windows)]
         {
-            command.creation_flags(0x08000000).output()? // CREATE_NO_WINDOW
+            command.creation_flags(0x08000000).output()?
         }
         #[cfg(not(windows))]
         {
@@ -196,7 +193,6 @@ pub fn get_frame_rate(input: &Path, ffprobe_path: &Path) -> Result<f32> {
     let rate_str = String::from_utf8(output.stdout)?;
     let rate_str = rate_str.trim();
 
-    // Handle fractional frame rates (e.g., "30000/1001")
     if let Some((num, den)) = rate_str.split_once('/') {
         let numerator: f32 = num.parse()?;
         let denominator: f32 = den.parse()?;
