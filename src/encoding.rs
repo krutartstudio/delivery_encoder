@@ -47,15 +47,16 @@ pub fn run_encoding(
             let path = entry.path();
             if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
                 if file_name.starts_with(&config.base_name) && file_name.ends_with(".png") {
-                    let num_str = file_name
-                        .trim_start_matches(&config.base_name)
-                        .trim_start_matches('_')
-                        .trim_end_matches(".png");
-                    if let Ok(num) = num_str.parse::<u32>() {
-                        if num > max_frame {
-                            max_frame = num;
+                    // Fixed pattern detection: use '-' instead of '_'
+                    if let Some((prefix, num_str)) = file_name.split_once('-') {
+                        if prefix == config.base_name {
+                            if let Ok(num) = num_str.trim_end_matches(".png").parse::<u32>() {
+                                if num > max_frame {
+                                    max_frame = num;
+                                }
+                                found_any = true;
+                            }
                         }
-                        found_any = true;
                     }
                 }
             }
