@@ -37,7 +37,7 @@ pub fn run_encoding(
 
     let total_frames = (duration * frame_rate).ceil() as u32;
 
-    let output_pattern = format!("{}-%04d.png", config.base_name);
+    let output_pattern = format!("{}-%06d.png", config.base_name);
     let output_path = config.output_dir.join(&output_pattern);
 
     let mut max_frame = 0;
@@ -49,7 +49,7 @@ pub fn run_encoding(
                 if file_name.starts_with(&config.base_name) && file_name.ends_with(".png") {
                     let num_str = file_name
                         .trim_start_matches(&config.base_name)
-                        .trim_start_matches('-')  // Changed from '_' to '-'
+                        .trim_start_matches('-')  
                         .trim_end_matches(".png");
                     if let Ok(num) = num_str.parse::<u32>() {
                         if num > max_frame {
@@ -101,7 +101,7 @@ pub fn run_encoding(
         .arg("-vsync")
         .arg("0")
         .arg("-start_number")
-        .arg(start_frame.to_string())  // Start from last frame
+        .arg(start_frame.to_string())
         .arg("-progress")
         .arg(&progress_path)
         .arg(output_path)
@@ -132,7 +132,7 @@ pub fn run_encoding(
         initial_progress,
         start_frame,
         format!(
-            "Processing | Res: {}x{} | Start: {:04} | ETA: --:--",
+            "Processing | Res: {}x{} | Start: {:06} | ETA: --:--",
             target_width, target_height, start_frame
         ),
     ));
