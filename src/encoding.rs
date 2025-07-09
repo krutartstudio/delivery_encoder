@@ -49,7 +49,7 @@ pub fn run_encoding(
                 if file_name.starts_with(&config.base_name) && file_name.ends_with(".png") {
                     let num_str = file_name
                         .trim_start_matches(&config.base_name)
-                        .trim_start_matches('-')  
+                        .trim_start_matches('-')
                         .trim_end_matches(".png");
                     if let Ok(num) = num_str.parse::<u32>() {
                         if num > max_frame {
@@ -76,15 +76,16 @@ pub fn run_encoding(
 
     let filter_complex = if config.resolution != Resolution::K6 {
         format!(
-            "[0:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2[vid]; \
-             [1:v]scale={}:{}[ovr]; \
+            "[0:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,format=rgb48[vid]; \
+             [1:v]scale={}:{},format=rgb48[ovr]; \
              [vid][ovr]overlay=0:0",
             target_width, target_height, target_width, target_height, target_width, target_height
         )
     } else {
         format!(
-            "[1:v]scale={}:{}[ovr]; \
-             [0:v][ovr]overlay=0:0",
+            "[1:v]scale={}:{},format=rgb48[ovr]; \
+             [0:v]format=rgb48[vid]; \
+             [vid][ovr]overlay=0:0",
             width, height
         )
     };
@@ -98,6 +99,8 @@ pub fn run_encoding(
         .arg(&config.overlay_image)
         .arg("-filter_complex")
         .arg(&filter_complex)
+        .arg("-pix_fmt")
+        .arg("rgb48") // 16-bit RGB
         .arg("-vsync")
         .arg("0")
         .arg("-start_number")

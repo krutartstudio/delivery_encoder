@@ -149,7 +149,8 @@ impl DeliveryEncoderApp {
             Resolution::K6 => get_resolution(&self.input_video, &self.ffprobe_path)?,
         };
 
-        let bytes_per_frame = (width as u64) * (height as u64) * 4;
+        // Changed from 4 to 6 bytes per pixel (16-bit RGB)
+        let bytes_per_frame = (width as u64) * (height as u64) * 6;
         let duration = get_duration(&self.input_video, &self.ffprobe_path)?;
         let frame_rate = get_frame_rate(&self.input_video, &self.ffprobe_path)?;
         let total_frames = (duration * frame_rate).ceil() as u64;
@@ -249,7 +250,7 @@ impl DeliveryEncoderApp {
                     if file_name.starts_with(&self.base_name) && file_name.ends_with(".png") {
                         let num_str = file_name
                             .trim_start_matches(&self.base_name)
-                            .trim_start_matches('-')  
+                            .trim_start_matches('-')
                             .trim_end_matches(".png");
                         if let Ok(num) = num_str.parse::<u32>() {
                             if num > max_frame {
