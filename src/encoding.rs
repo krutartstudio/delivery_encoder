@@ -76,16 +76,15 @@ pub fn run_encoding(
 
     let filter_complex = if config.resolution != Resolution::K6 {
         format!(
-            "[0:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2,format=rgb48[vid]; \
-             [1:v]scale={}:{},format=rgb48[ovr]; \
+            "[0:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2[vid]; \
+             [1:v]scale={}:{}[ovr]; \
              [vid][ovr]overlay=0:0",
             target_width, target_height, target_width, target_height, target_width, target_height
         )
     } else {
         format!(
-            "[1:v]scale={}:{},format=rgb48[ovr]; \
-             [0:v]format=rgb48[vid]; \
-             [vid][ovr]overlay=0:0",
+            "[1:v]scale={}:{}[ovr]; \
+             [0:v][ovr]overlay=0:0",
             width, height
         )
     };
@@ -99,14 +98,15 @@ pub fn run_encoding(
         .arg(&config.overlay_image)
         .arg("-filter_complex")
         .arg(&filter_complex)
-        .arg("-pix_fmt")
-        .arg("rgb48") // 16-bit RGB
         .arg("-vsync")
         .arg("0")
         .arg("-start_number")
         .arg(start_frame.to_string())
         .arg("-progress")
         .arg(&progress_path)
+        // Set output to 16-bit RGB
+        .arg("-pix_fmt")
+        .arg("rgb48") // 16-bit RGB
         .arg(output_path)
         .arg("-y")
         .stdout(Stdio::null())

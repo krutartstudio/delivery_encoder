@@ -149,7 +149,7 @@ impl DeliveryEncoderApp {
             Resolution::K6 => get_resolution(&self.input_video, &self.ffprobe_path)?,
         };
 
-        // Changed from 4 to 6 bytes per pixel (16-bit RGB)
+        // Updated for 16-bit RGB (6 bytes per pixel instead of 4)
         let bytes_per_frame = (width as u64) * (height as u64) * 6;
         let duration = get_duration(&self.input_video, &self.ffprobe_path)?;
         let frame_rate = get_frame_rate(&self.input_video, &self.ffprobe_path)?;
