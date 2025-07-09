@@ -250,7 +250,7 @@ impl DeliveryEncoderApp {
                     if file_name.starts_with(&self.base_name) && file_name.ends_with(".png") {
                         let num_str = file_name
                             .trim_start_matches(&self.base_name)
-                            .trim_start_matches('_')
+                            .trim_start_matches('-')  // Changed from '_' to '-'
                             .trim_end_matches(".png");
                         if let Ok(num) = num_str.parse::<u32>() {
                             if num > max_frame {
@@ -262,7 +262,8 @@ impl DeliveryEncoderApp {
             }
         }
 
-        let first_file = format!("{}_{:04}.png", self.base_name, max_frame);
+        // Changed to use dash in filename
+        let first_file = format!("{}-{:04}.png", self.base_name, max_frame);
         self.current_frame = format!("File: {} | Starting FFmpeg | ETA: --:--", first_file);
 
         let (progress_sender, progress_receiver) = std::sync::mpsc::channel();
@@ -364,7 +365,8 @@ impl eframe::App for DeliveryEncoderApp {
         ctx.set_style(style);
 
         while let Ok((progress, frame, message)) = self.progress_receiver.try_recv() {
-            let file_name = format!("{}_{:04}.png", self.base_name, frame);
+            // Changed to use dash in filename
+            let file_name = format!("{}-{:04}.png", self.base_name, frame);
             let full_message = format!("File: {} | {}", file_name, message);
 
             if progress < 0.0 {

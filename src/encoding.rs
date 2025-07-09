@@ -49,7 +49,7 @@ pub fn run_encoding(
                 if file_name.starts_with(&config.base_name) && file_name.ends_with(".png") {
                     let num_str = file_name
                         .trim_start_matches(&config.base_name)
-                        .trim_start_matches('_')
+                        .trim_start_matches('-')  // Changed from '_' to '-'
                         .trim_end_matches(".png");
                     if let Ok(num) = num_str.parse::<u32>() {
                         if num > max_frame {
@@ -101,7 +101,7 @@ pub fn run_encoding(
         .arg("-vsync")
         .arg("0")
         .arg("-start_number")
-        .arg(start_frame.to_string())
+        .arg(start_frame.to_string())  // Start from last frame
         .arg("-progress")
         .arg(&progress_path)
         .arg(output_path)
