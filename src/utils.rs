@@ -164,7 +164,7 @@ pub fn get_frame_rate(input: &Path, ffprobe_path: &Path) -> Result<f32> {
             "-select_streams",
             "v:0",
             "-show_entries",
-            "stream=r_frame_rate",
+            "stream=avg_frame_rate", // Changed to avg_frame_rate
             "-of",
             "default=noprint_wrappers=1:nokey=1",
             input_str,

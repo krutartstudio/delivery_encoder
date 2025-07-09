@@ -76,15 +76,15 @@ pub fn run_encoding(
 
     let filter_complex = if config.resolution != Resolution::K6 {
         format!(
-            "[0:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2[vid]; \
-             [1:v]scale={}:{}[ovr]; \
-             [vid][ovr]overlay=0:0",
-            target_width, target_height, target_width, target_height, target_width, target_height
-        )
+                "[0:v]scale={}:{}:flags=lanczos+full_chroma_inp+full_chroma_int:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black[vid]; \
+                 [1:v]scale={}:{}:flags=lanczos+full_chroma_inp+full_chroma_int[ovr]; \
+                 [vid][ovr]overlay=0:0:format=rgb,format=rgb48le",
+                target_width, target_height, target_width, target_height, target_width, target_height
+            )
     } else {
         format!(
-            "[1:v]scale={}:{}[ovr]; \
-             [0:v][ovr]overlay=0:0",
+            "[1:v]scale={}:{}:flags=lanczos+full_chroma_inp+full_chroma_int[ovr]; \
+                 [0:v][ovr]overlay=0:0:format=rgb,format=rgb48le",
             width, height
         )
     };
@@ -104,12 +104,18 @@ pub fn run_encoding(
         .arg(start_frame.to_string())
         .arg("-progress")
         .arg(&progress_path)
-        // .arg("-color_trc")
-        // .arg("linear")
+        .arg("-color_trc")
+        .arg("linear")
+        .arg("-colorspace")
+        .arg("bt709")
+        .arg("-color_primaries")
+        .arg("bt709")
         .arg("-pix_fmt")
-        .arg("rgb48be")
+        .arg("rgb48le")
         .arg("-compression_level")
         .arg("1")
+        .arg("-pred")
+        .arg("none")
         .arg(output_path)
         .arg("-y")
         .stdout(Stdio::null())

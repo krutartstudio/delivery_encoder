@@ -21,4 +21,9 @@ impl Resolution {
             Resolution::K6 => None,
         }
     }
+
+    // NEW: Get filter flags for scaling
+    pub fn filter_flags(&self) -> &'static str {
+        "lanczos+full_chroma_inp+full_chroma_int"
+    }
 }
