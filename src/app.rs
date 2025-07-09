@@ -69,7 +69,7 @@ impl DeliveryEncoderApp {
                 content
                     .split("### instrukce ###")
                     .nth(1)
-                    .unwrap_or("No instructions found.")
+                    .unwrap_or(" ") // No instructions found.
                     .trim()
                     .to_string()
             })
@@ -552,7 +552,7 @@ impl eframe::App for DeliveryEncoderApp {
 
                     ui.vertical(|ui| {
                         ui.label(
-                            egui::RichText::new("Instructions:")
+                            egui::RichText::new(" ") //instrukce:
                                 .heading()
                                 .color(egui::Color32::LIGHT_YELLOW),
                         );
