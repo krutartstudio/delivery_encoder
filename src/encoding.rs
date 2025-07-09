@@ -78,13 +78,13 @@ pub fn run_encoding(
         format!(
             "[0:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2[vid]; \
              [1:v]scale={}:{}[ovr]; \
-             [vid][ovr]overlay=0:0",
+             [vid][ovr]overlay=0:0, colorspace=all=bt709:trc=linear",
             target_width, target_height, target_width, target_height, target_width, target_height
         )
     } else {
         format!(
             "[1:v]scale={}:{}[ovr]; \
-             [0:v][ovr]overlay=0:0",
+             [0:v][ovr]overlay=0:0, colorspace=all=bt709:trc=linear",
             width, height
         )
     };
@@ -104,11 +104,9 @@ pub fn run_encoding(
         .arg(start_frame.to_string())
         .arg("-progress")
         .arg(&progress_path)
-        // Set output to 16-bit RGB
+        // Set output to 16-bit linear RGB
         .arg("-pix_fmt")
         .arg("rgb48") // 16-bit RGB
-        .arg("-color_trc") // Add linear transfer characteristics
-        .arg("linear")
         .arg(output_path)
         .arg("-y")
         .stdout(Stdio::null())
