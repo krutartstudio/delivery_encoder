@@ -107,6 +107,8 @@ pub fn run_encoding(
         // Set output to 16-bit RGB
         .arg("-pix_fmt")
         .arg("rgb48") // 16-bit RGB
+        .arg("-color_trc") // Add linear transfer characteristics
+        .arg("linear")
         .arg(output_path)
         .arg("-y")
         .stdout(Stdio::null())
