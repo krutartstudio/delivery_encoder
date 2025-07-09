@@ -35,6 +35,7 @@ pub struct DeliveryEncoderApp {
     pub sufficient_storage: bool,
     pub storage_error: Option<String>,
     pub base_name: String,
+    pub original_base_name: String,
     pub has_existing_frames: bool,
     pub dialog_state: DialogState,
     pub instructions: String,
@@ -59,10 +60,12 @@ impl DeliveryEncoderApp {
             })
             .unwrap_or_else(|_| PathBuf::from("assets/video.mov"));
 
-        let base_name = input_video
+        let original_base_name = input_video
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "video".to_string());
+
+        let base_name = original_base_name.clone();
 
         let instructions = std::fs::read_to_string("assets/instrukce.md")
             .map(|content| {
@@ -91,6 +94,7 @@ impl DeliveryEncoderApp {
             sufficient_storage: false,
             storage_error: Some("Please select output directory".to_string()),
             base_name,
+            original_base_name,
             has_existing_frames: false,
             dialog_state: DialogState::None,
             instructions,
@@ -172,7 +176,26 @@ impl DeliveryEncoderApp {
         Ok(required_bytes_with_buffer as f64 / (1024.0 * 1024.0 * 1024.0))
     }
 
+    // Update base name with current resolution tag
+    fn update_base_name(&mut self) {
+        let current_tag = self.resolution.as_file_tag();
+        let mut new_name = self.original_base_name.clone();
+
+        // Replace any existing resolution tags (case insensitive)
+        for tag in &["2k", "4k", "6k", "2K", "4K", "6K"] {
+            if new_name.contains(tag) {
+                new_name = new_name.replace(tag, current_tag);
+                break;
+            }
+        }
+
+        self.base_name = new_name;
+    }
+
     pub fn start_encoding(&mut self) {
+        // Update base name with current resolution before encoding
+        self.update_base_name();
+
         if self.encoding {
             return;
         }
@@ -394,6 +417,9 @@ impl eframe::App for DeliveryEncoderApp {
             ctx.request_repaint();
         }
 
+        // Track previous resolution to detect changes
+        let previous_resolution = self.resolution;
+
         egui::CentralPanel::default()
             .frame(egui::Frame {
                 inner_margin: egui::Margin::symmetric(30.0, 30.0),
@@ -562,6 +588,12 @@ impl eframe::App for DeliveryEncoderApp {
                     });
                 }
             });
+
+        // Check if resolution changed and update base name
+        if previous_resolution != self.resolution {
+            self.update_base_name();
+            self.update_storage_status();
+        }
 
         if let DialogState::CancelConfirmation(delete_frames) = self.dialog_state {
             egui::Window::new("Cancel Encoding?")

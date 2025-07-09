@@ -22,8 +22,15 @@ impl Resolution {
         }
     }
 
-    // NEW: Get filter flags for scaling
     pub fn filter_flags(&self) -> &'static str {
         "lanczos+full_chroma_inp+full_chroma_int"
+    }
+
+    pub fn as_file_tag(&self) -> &'static str {
+        match self {
+            Resolution::K2 => "2k",
+            Resolution::K4 => "4k",
+            Resolution::K6 => "6k",
+        }
     }
 }
