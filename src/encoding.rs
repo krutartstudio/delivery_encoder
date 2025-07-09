@@ -104,11 +104,10 @@ pub fn run_encoding(
         .arg(start_frame.to_string())
         .arg("-progress")
         .arg(&progress_path)
-        // Set output to 16-bit RGB
+        // .arg("-color_trc") 
+        // .arg("linear")
         .arg("-pix_fmt")
-        .arg("rgb48") // 16-bit RGB
-        .arg("-color_trc") // Add linear transfer characteristics
-        .arg("linear")
+        .arg("rgb48") 
         .arg(output_path)
         .arg("-y")
         .stdout(Stdio::null())
