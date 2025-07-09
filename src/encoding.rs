@@ -107,7 +107,7 @@ pub fn run_encoding(
         // .arg("-color_trc")
         // .arg("linear")
         .arg("-pix_fmt")
-        .arg("rgb48")
+        .arg("rgb48be")
         .arg("-compression_level")
         .arg("1")
         .arg(output_path)
