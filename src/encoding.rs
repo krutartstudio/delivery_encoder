@@ -109,7 +109,7 @@ pub fn run_encoding(
         .arg("-pix_fmt")
         .arg("rgb48")
         .arg("-compression_level")
-        .arg("2")
+        .arg("1")
         .arg(output_path)
         .arg("-y")
         .stdout(Stdio::null())
