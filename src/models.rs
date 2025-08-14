@@ -3,6 +3,7 @@ pub enum Resolution {
     K2,
     K4,
     K6,
+    K8,
 }
 
 impl Resolution {
@@ -11,6 +12,7 @@ impl Resolution {
             Resolution::K2 => "2K (2048x2048)",
             Resolution::K4 => "4K (4096x4096)",
             Resolution::K6 => "6K (Original)",
+            Resolution::K8 => "8K (8192x8192)",
         }
     }
 
@@ -19,18 +21,23 @@ impl Resolution {
             Resolution::K2 => Some((2048, 2048)),
             Resolution::K4 => Some((4096, 4096)),
             Resolution::K6 => None,
-        }
-    }
-
-    pub fn filter_flags(&self) -> &'static str {
-        "lanczos+full_chroma_inp+full_chroma_int"
-    }
-
-    pub fn as_file_tag(&self) -> &'static str {
-        match self {
-            Resolution::K2 => "2k",
-            Resolution::K4 => "4k",
-            Resolution::K6 => "6k",
+            Resolution::K8 => Some((8192, 8192)),
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameRateOption {
+    Original,
+    Fps60,
+}
+
+impl FrameRateOption {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FrameRateOption::Original => "Original",
+            FrameRateOption::Fps60 => "60 FPS",
+        }
+    }
+}
+

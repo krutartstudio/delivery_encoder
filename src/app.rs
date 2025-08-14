@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     encoding::{run_encoding, EncodingConfig},
-    models::Resolution,
+    models::{FrameRateOption, Resolution},
     utils::{find_ffmpeg, get_duration, get_frame_rate, get_resolution, open_folder},
 };
 
@@ -31,11 +31,10 @@ pub struct DeliveryEncoderApp {
     pub ffprobe_path: PathBuf,
     pub current_frame: String,
     pub resolution: Resolution,
+    pub frame_rate_option: FrameRateOption,
     pub input_video: PathBuf,
     pub sufficient_storage: bool,
     pub storage_error: Option<String>,
-    pub base_name: String,
-    pub original_base_name: String,
     pub has_existing_frames: bool,
     pub dialog_state: DialogState,
     pub instructions: String,
@@ -60,13 +59,6 @@ impl DeliveryEncoderApp {
             })
             .unwrap_or_else(|_| PathBuf::from("assets/video.mov"));
 
-        let original_base_name = input_video
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "video".to_string());
-
-        let base_name = original_base_name.clone();
-
         let instructions = std::fs::read_to_string("assets/instrukce.md")
             .map(|content| {
                 content
@@ -90,11 +82,10 @@ impl DeliveryEncoderApp {
             ffprobe_path,
             current_frame: "File: -- | Idle | ETA: --:--".to_string(),
             resolution: Resolution::K6,
+            frame_rate_option: FrameRateOption::Original,
             input_video,
             sufficient_storage: false,
             storage_error: Some("Please select output directory".to_string()),
-            base_name,
-            original_base_name,
             has_existing_frames: false,
             dialog_state: DialogState::None,
             instructions,
@@ -129,7 +120,7 @@ impl DeliveryEncoderApp {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                        if file_name.starts_with(&self.base_name) && file_name.ends_with(".png") {
+                        if file_name.starts_with("video") && file_name.ends_with(".png") {
                             return true;
                         }
                     }
@@ -151,12 +142,16 @@ impl DeliveryEncoderApp {
             Resolution::K2 => (2048, 2048),
             Resolution::K4 => (4096, 4096),
             Resolution::K6 => get_resolution(&self.input_video, &self.ffprobe_path)?,
+            Resolution::K8 => (7680, 4320),
         };
 
         // Updated for 16-bit RGB (6 bytes per pixel instead of 4)
         let bytes_per_frame = (width as u64) * (height as u64) * 6;
         let duration = get_duration(&self.input_video, &self.ffprobe_path)?;
-        let frame_rate = get_frame_rate(&self.input_video, &self.ffprobe_path)?;
+        let frame_rate = match self.frame_rate_option {
+            FrameRateOption::Original => get_frame_rate(&self.input_video, &self.ffprobe_path)?,
+            FrameRateOption::Fps60 => 60.0,
+        };
         let total_frames = (duration * frame_rate).ceil() as u64;
         let required_bytes = bytes_per_frame * total_frames;
         let required_bytes_with_buffer = (required_bytes as f64 * 1.2) as u64;
@@ -176,26 +171,7 @@ impl DeliveryEncoderApp {
         Ok(required_bytes_with_buffer as f64 / (1024.0 * 1024.0 * 1024.0))
     }
 
-    // Update base name with current resolution tag
-    fn update_base_name(&mut self) {
-        let current_tag = self.resolution.as_file_tag();
-        let mut new_name = self.original_base_name.clone();
-
-        // Replace any existing resolution tags (case insensitive)
-        for tag in &["2k", "4k", "6k", "2K", "4K", "6K"] {
-            if new_name.contains(tag) {
-                new_name = new_name.replace(tag, current_tag);
-                break;
-            }
-        }
-
-        self.base_name = new_name;
-    }
-
     pub fn start_encoding(&mut self) {
-        // Update base name with current resolution before encoding
-        self.update_base_name();
-
         if self.encoding {
             return;
         }
@@ -208,11 +184,6 @@ impl DeliveryEncoderApp {
         }
 
         let input_video = self.input_video.clone();
-        let overlay_image = match self.resolution {
-            Resolution::K2 => PathBuf::from("assets/overlay_2k.png"),
-            Resolution::K4 => PathBuf::from("assets/overlay_4k.png"),
-            Resolution::K6 => PathBuf::from("assets/overlay_6k.png"),
-        };
 
         let validation_errors = [
             (
@@ -229,13 +200,6 @@ impl DeliveryEncoderApp {
             (
                 !input_video.exists(),
                 format!("Error: Input video not found at {}", input_video.display()),
-            ),
-            (
-                !overlay_image.exists(),
-                format!(
-                    "Error: Overlay image not found at {}",
-                    overlay_image.display()
-                ),
             ),
         ];
 
@@ -270,10 +234,9 @@ impl DeliveryEncoderApp {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                    if file_name.starts_with(&self.base_name) && file_name.ends_with(".png") {
+                    if file_name.starts_with("video") && file_name.ends_with(".png") {
                         let num_str = file_name
-                            .trim_start_matches(&self.base_name)
-                            .trim_start_matches('-')
+                            .trim_start_matches("video")
                             .trim_end_matches(".png");
                         if let Ok(num) = num_str.parse::<u32>() {
                             if num > max_frame {
@@ -285,7 +248,7 @@ impl DeliveryEncoderApp {
             }
         }
 
-        let first_file = format!("{}-{:06}.png", self.base_name, max_frame);
+        let first_file = format!("video{:04}.png", max_frame);
         self.current_frame = format!("File: {} | Starting FFmpeg | ETA: --:--", first_file);
 
         let (progress_sender, progress_receiver) = std::sync::mpsc::channel();
@@ -296,12 +259,11 @@ impl DeliveryEncoderApp {
 
         let config = EncodingConfig {
             input_video,
-            overlay_image,
             output_dir,
             ffmpeg_path: self.ffmpeg_path.clone(),
             ffprobe_path: self.ffprobe_path.clone(),
             resolution: self.resolution,
-            base_name: self.base_name.clone(),
+            frame_rate_option: self.frame_rate_option,
         };
 
         let frame_sender = progress_sender.clone();
@@ -329,7 +291,7 @@ impl DeliveryEncoderApp {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                            if file_name.starts_with(&self.base_name) && file_name.ends_with(".png")
+                            if file_name.starts_with("video") && file_name.ends_with(".png")
                             {
                                 let _ = std::fs::remove_file(&path);
                             }
@@ -387,7 +349,7 @@ impl eframe::App for DeliveryEncoderApp {
         ctx.set_style(style);
 
         while let Ok((progress, frame, message)) = self.progress_receiver.try_recv() {
-            let file_name = format!("{}-{:06}.png", self.base_name, frame);
+            let file_name = format!("video{:04}.png", frame);
             let full_message = format!("File: {} | {}", file_name, message);
 
             if progress < 0.0 {
@@ -417,8 +379,9 @@ impl eframe::App for DeliveryEncoderApp {
             ctx.request_repaint();
         }
 
-        // Track previous resolution to detect changes
+        // Track previous options to detect changes
         let previous_resolution = self.resolution;
+        let previous_fr = self.frame_rate_option;
 
         egui::CentralPanel::default()
             .frame(egui::Frame {
@@ -451,6 +414,32 @@ impl eframe::App for DeliveryEncoderApp {
                             &mut self.resolution,
                             Resolution::K6,
                             Resolution::K6.as_str(),
+                        );
+                        ui.selectable_value(
+                            &mut self.resolution,
+                            Resolution::K8,
+                            Resolution::K8.as_str(),
+                        );
+                    });
+                });
+
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label("Frame Rate:");
+                    let fr_combo = egui::ComboBox::from_id_source("fr_combo")
+                        .selected_text(self.frame_rate_option.as_str());
+
+                    ui.set_enabled(!self.encoding);
+                    fr_combo.show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.frame_rate_option,
+                            FrameRateOption::Original,
+                            FrameRateOption::Original.as_str(),
+                        );
+                        ui.selectable_value(
+                            &mut self.frame_rate_option,
+                            FrameRateOption::Fps60,
+                            FrameRateOption::Fps60.as_str(),
                         );
                     });
                 });
@@ -590,8 +579,7 @@ impl eframe::App for DeliveryEncoderApp {
             });
 
         // Check if resolution changed and update base name
-        if previous_resolution != self.resolution {
-            self.update_base_name();
+        if previous_resolution != self.resolution || previous_fr != self.frame_rate_option {
             self.update_storage_status();
         }
 
@@ -628,3 +616,4 @@ impl eframe::App for DeliveryEncoderApp {
         }
     }
 }
+

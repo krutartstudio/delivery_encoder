@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    models::Resolution,
+    models::{FrameRateOption, Resolution},
     utils::{get_duration, get_frame_rate, get_resolution},
 };
 
@@ -17,12 +17,11 @@ use std::os::windows::process::CommandExt;
 
 pub struct EncodingConfig {
     pub input_video: PathBuf,
-    pub overlay_image: PathBuf,
     pub output_dir: PathBuf,
     pub ffmpeg_path: PathBuf,
     pub ffprobe_path: PathBuf,
     pub resolution: Resolution,
-    pub base_name: String,
+    pub frame_rate_option: FrameRateOption,
 }
 
 pub fn run_encoding(
@@ -31,14 +30,19 @@ pub fn run_encoding(
     cancel_receiver: Receiver<()>,
 ) -> Result<()> {
     let duration = get_duration(&config.input_video, &config.ffprobe_path)?;
-    let frame_rate = get_frame_rate(&config.input_video, &config.ffprobe_path)?;
-    let resolution = get_resolution(&config.input_video, &config.ffprobe_path)?;
-    let (width, height) = (resolution.0, resolution.1);
+    let original_frame_rate = get_frame_rate(&config.input_video, &config.ffprobe_path)?;
+    let (original_width, original_height) =
+        get_resolution(&config.input_video, &config.ffprobe_path)?;
+
+    let frame_rate = match config.frame_rate_option {
+        FrameRateOption::Original => original_frame_rate,
+        FrameRateOption::Fps60 => 60.0,
+    };
 
     let total_frames = (duration * frame_rate).ceil() as u32;
 
-    let output_pattern = format!("{}-%06d.png", config.base_name);
-    let output_path = config.output_dir.join(&output_pattern);
+    let output_pattern = "video%04d.png";
+    let output_path = config.output_dir.join(output_pattern);
 
     let mut max_frame = 0;
     let mut found_any = false;
@@ -46,10 +50,9 @@ pub fn run_encoding(
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                if file_name.starts_with(&config.base_name) && file_name.ends_with(".png") {
+                if file_name.starts_with("video") && file_name.ends_with(".png") {
                     let num_str = file_name
-                        .trim_start_matches(&config.base_name)
-                        .trim_start_matches('-')
+                        .trim_start_matches("video")
                         .trim_end_matches(".png");
                     if let Ok(num) = num_str.parse::<u32>() {
                         if num > max_frame {
@@ -63,7 +66,7 @@ pub fn run_encoding(
     }
 
     let start_frame = if found_any { max_frame } else { 0 };
-    let start_time_secs = start_frame as f32 / frame_rate;
+    let start_time_secs = start_frame as f32 / original_frame_rate; // Seek based on original video time
     let start_time_str = format!("{:.3}", start_time_secs);
 
     let temp_progress = tempfile::NamedTempFile::new()?;
@@ -71,22 +74,16 @@ pub fn run_encoding(
 
     let (target_width, target_height) = match config.resolution.target_size() {
         Some((w, h)) => (w, h),
-        None => (width, height),
+        None => (original_width, original_height),
     };
 
     let filter_complex = if config.resolution != Resolution::K6 {
         format!(
-                "[0:v]scale={}:{}:flags=lanczos+full_chroma_inp+full_chroma_int:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black[vid]; \
-                 [1:v]scale={}:{}:flags=lanczos+full_chroma_inp+full_chroma_int[ovr]; \
-                 [vid][ovr]overlay=0:0:format=rgb,format=rgb48le",
-                target_width, target_height, target_width, target_height, target_width, target_height
-            )
-    } else {
-        format!(
-            "[1:v]scale={}:{}:flags=lanczos+full_chroma_inp+full_chroma_int[ovr]; \
-                 [0:v][ovr]overlay=0:0:format=rgb,format=rgb48le",
-            width, height
+            "[0:v]scale={}:{}:flags=lanczos:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,format=rgb48le",
+            target_width, target_height, target_width, target_height
         )
+    } else {
+        "format=rgb48le".to_string()
     };
 
     let mut cmd = Command::new(&config.ffmpeg_path);
@@ -94,8 +91,6 @@ pub fn run_encoding(
         .arg(&start_time_str)
         .arg("-i")
         .arg(&config.input_video)
-        .arg("-i")
-        .arg(&config.overlay_image)
         .arg("-filter_complex")
         .arg(&filter_complex)
         .arg("-vsync")
@@ -103,8 +98,13 @@ pub fn run_encoding(
         .arg("-start_number")
         .arg(start_frame.to_string())
         .arg("-progress")
-        .arg(&progress_path)
-        .arg("-color_trc")
+        .arg(&progress_path);
+
+    if let FrameRateOption::Fps60 = config.frame_rate_option {
+        cmd.arg("-r").arg("60");
+    }
+
+    cmd.arg("-color_trc")
         .arg("linear")
         .arg("-colorspace")
         .arg("bt709")
@@ -144,7 +144,7 @@ pub fn run_encoding(
         initial_progress,
         start_frame,
         format!(
-            "Processing | Res: {}x{} | Start: {:06} | ETA: --:--",
+            "Processing | Res: {}x{} | Start: {:04} | ETA: --:--",
             target_width, target_height, start_frame
         ),
     ));
@@ -192,14 +192,10 @@ pub fn run_encoding(
                 }
             }
 
-            let detailed_log = if config.resolution != Resolution::K6 {
-                format!(
-                    "Processing | Res: {}x{} | ETA: {}",
-                    target_width, target_height, last_eta
-                )
-            } else {
-                format!("Processing | Res: {}x{} | ETA: {}", width, height, last_eta)
-            };
+            let detailed_log = format!(
+                "Processing | Res: {}x{} | ETA: {}",
+                target_width, target_height, last_eta
+            );
 
             let _ = progress_sender.send((progress_value, last_frame, detailed_log));
         }
@@ -209,14 +205,10 @@ pub fn run_encoding(
 
     let status = child.wait()?;
     if status.success() {
-        let detailed_log = if config.resolution != Resolution::K6 {
-            format!(
-                "Processing | Res: {}x{} | ETA: 00:00",
-                target_width, target_height
-            )
-        } else {
-            format!("Processing | Res: {}x{} | ETA: 00:00", width, height)
-        };
+        let detailed_log = format!(
+            "Processing | Res: {}x{} | ETA: 00:00",
+            target_width, target_height
+        );
 
         let _ = progress_sender.send((100.0, last_frame, detailed_log));
         Ok(())
@@ -229,3 +221,4 @@ pub fn run_encoding(
         ))
     }
 }
+
