@@ -77,13 +77,15 @@ pub fn run_encoding(
         None => (original_width, original_height),
     };
 
-    let filter_complex = if config.resolution != Resolution::K6 {
+    // Make filter graph more explicit and add back chroma flags for quality.
+    let filter_complex = if config.resolution.target_size().is_some() {
         format!(
-            "[0:v]scale={}:{}:flags=lanczos:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,format=rgb48le",
+            "[0:v]scale={}:{}:flags=lanczos+full_chroma_inp+full_chroma_int:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,format=rgb48le",
             target_width, target_height, target_width, target_height
         )
     } else {
-        "format=rgb48le".to_string()
+        // When using original resolution, explicitly state the input stream [0:v] for the format filter.
+        "[0:v]format=rgb48le".to_string()
     };
 
     let mut cmd = Command::new(&config.ffmpeg_path);
@@ -221,4 +223,3 @@ pub fn run_encoding(
         ))
     }
 }
-
