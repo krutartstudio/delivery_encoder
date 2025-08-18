@@ -138,11 +138,10 @@ impl DeliveryEncoderApp {
             .as_ref()
             .ok_or_else(|| anyhow!("Output directory not set"))?;
 
-        let (width, height) = match self.resolution {
-            Resolution::K2 => (2048, 2048),
-            Resolution::K4 => (4096, 4096),
-            Resolution::K6 => get_resolution(&self.input_video, &self.ffprobe_path)?,
-            Resolution::K8 => (7680, 4320),
+        // Use the target_size function for consistency with the encoding process
+        let (width, height) = match self.resolution.target_size() {
+            Some((w, h)) => (w, h),
+            None => get_resolution(&self.input_video, &self.ffprobe_path)?,
         };
 
         // Updated for 16-bit RGB (6 bytes per pixel instead of 4)
@@ -616,4 +615,3 @@ impl eframe::App for DeliveryEncoderApp {
         }
     }
 }
-
