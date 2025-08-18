@@ -77,16 +77,34 @@ pub fn run_encoding(
         None => (original_width, original_height),
     };
 
-    // Make filter graph more explicit and add back chroma flags for quality.
-    let filter_complex = if config.resolution.target_size().is_some() {
+    // Build the filter graph string step-by-step for clarity and correctness.
+    let mut filter_complex = if config.resolution.target_size().is_some() {
         format!(
-            "[0:v]scale={}:{}:flags=lanczos+full_chroma_inp+full_chroma_int:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,format=rgb48le",
+            "[0:v]scale={}:{}:flags=lanczos+full_chroma_inp+full_chroma_int:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black",
             target_width, target_height, target_width, target_height
         )
     } else {
-        // When using original resolution, explicitly state the input stream [0:v] for the format filter.
-        "[0:v]format=rgb48le".to_string()
+        "[0:v]".to_string() // Start with the input stream specifier
     };
+
+    // Conditionally add the fps filter to the chain.
+    if config.frame_rate_option == FrameRateOption::Fps60 {
+        // If there's already a filter, add a comma. Otherwise, this is the first filter.
+        if filter_complex != "[0:v]" {
+            filter_complex.push(',');
+        }
+        filter_complex.push_str("fps=60");
+    }
+    
+    // Always add the format filter at the end of the chain.
+    if filter_complex != "[0:v]" {
+        filter_complex.push(',');
+    } else {
+        // If no other filters were added, we still need to remove the stream specifier for the next step.
+        filter_complex.clear();
+    }
+    filter_complex.push_str("format=rgb48le");
+
 
     let mut cmd = Command::new(&config.ffmpeg_path);
     cmd.arg("-ss")
@@ -101,10 +119,6 @@ pub fn run_encoding(
         .arg(start_frame.to_string())
         .arg("-progress")
         .arg(&progress_path);
-
-    if let FrameRateOption::Fps60 = config.frame_rate_option {
-        cmd.arg("-r").arg("60");
-    }
 
     cmd.arg("-color_trc")
         .arg("linear")
