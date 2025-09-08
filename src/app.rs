@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use eframe::egui;
 use rfd::FileDialog;
 use std::{
@@ -38,6 +38,7 @@ pub struct DeliveryEncoderApp {
     pub has_existing_frames: bool,
     pub dialog_state: DialogState,
     pub instructions: String,
+    pub estimated_size_gb: Option<f64>,
 }
 
 impl DeliveryEncoderApp {
@@ -89,7 +90,18 @@ impl DeliveryEncoderApp {
             has_existing_frames: false,
             dialog_state: DialogState::None,
             instructions,
+            estimated_size_gb: None,
         }
+    }
+
+    /// Generates the base name for output files from the input video file.
+    /// It removes the extension and a specific suffix.
+    pub fn get_output_base_name(&self) -> String {
+        self.input_video
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.replace("-master_for_encoder", ""))
+            .unwrap_or_else(|| "video".to_string())
     }
 
     pub fn update_storage_status(&mut self) {
@@ -97,19 +109,21 @@ impl DeliveryEncoderApp {
             self.sufficient_storage = false;
             self.storage_error = Some("Please select output directory".to_string());
             self.has_existing_frames = false;
+            self.estimated_size_gb = None;
             return;
         }
 
         self.has_existing_frames = self.check_for_existing_frames();
+        self.sufficient_storage = true; // Always sufficient if dir is selected
 
-        match self.check_storage_availability() {
-            Ok(_) => {
-                self.sufficient_storage = true;
+        match self.calculate_estimated_size_gb() {
+            Ok(gb) => {
+                self.estimated_size_gb = Some(gb);
                 self.storage_error = None;
             }
             Err(e) => {
-                self.sufficient_storage = false;
-                self.storage_error = Some(e.to_string());
+                self.estimated_size_gb = None;
+                self.storage_error = Some(format!("Could not estimate size: {}", e));
             }
         }
     }
@@ -117,10 +131,11 @@ impl DeliveryEncoderApp {
     fn check_for_existing_frames(&self) -> bool {
         if let Some(output_dir) = &self.output_dir {
             if let Ok(entries) = std::fs::read_dir(output_dir) {
+                let base_name = self.get_output_base_name();
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                        if file_name.starts_with("video") && file_name.ends_with(".png") {
+                        if file_name.starts_with(&base_name) && file_name.ends_with(".png") {
                             return true;
                         }
                     }
@@ -130,21 +145,14 @@ impl DeliveryEncoderApp {
         false
     }
 
-    pub fn check_storage_availability(&self) -> Result<f64> {
-        use fs2::available_space;
-
-        let output_dir = self
-            .output_dir
-            .as_ref()
-            .ok_or_else(|| anyhow!("Output directory not set"))?;
-
-        // Use the target_size function for consistency with the encoding process
+    /// Calculates the estimated output size in Gigabytes.
+    pub fn calculate_estimated_size_gb(&self) -> Result<f64> {
         let (width, height) = match self.resolution.target_size() {
             Some((w, h)) => (w, h),
             None => get_resolution(&self.input_video, &self.ffprobe_path)?,
         };
 
-        // Updated for 16-bit RGB (6 bytes per pixel instead of 4)
+        // 16-bit RGB (rgb48le) is 6 bytes per pixel (2 bytes per channel * 3 channels)
         let bytes_per_frame = (width as u64) * (height as u64) * 6;
         let duration = get_duration(&self.input_video, &self.ffprobe_path)?;
         let frame_rate = match self.frame_rate_option {
@@ -153,21 +161,9 @@ impl DeliveryEncoderApp {
         };
         let total_frames = (duration * frame_rate).ceil() as u64;
         let required_bytes = bytes_per_frame * total_frames;
-        let required_bytes_with_buffer = (required_bytes as f64 * 1.2) as u64;
 
-        let free_space = available_space(output_dir)?;
-
-        if free_space < required_bytes_with_buffer {
-            let required_gb = required_bytes_with_buffer as f64 / (1024.0 * 1024.0 * 1024.0);
-            let available_gb = free_space as f64 / (1024.0 * 1024.0 * 1024.0);
-            return Err(anyhow!(
-                "Insufficient storage: {:.2}GB required, {:.2}GB available",
-                required_gb,
-                available_gb
-            ));
-        }
-
-        Ok(required_bytes_with_buffer as f64 / (1024.0 * 1024.0 * 1024.0))
+        // Convert bytes to gigabytes
+        Ok(required_bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     }
 
     pub fn start_encoding(&mut self) {
@@ -208,34 +204,22 @@ impl DeliveryEncoderApp {
             return;
         }
 
-        match self.check_storage_availability() {
-            Ok(required_gb) => {
-                self.status = format!(
-                    "Starting... | Free space available: {:.2}GB required",
-                    required_gb
-                );
-            }
-            Err(e) => {
-                self.status = format!("Storage error: {}", e);
-                self.current_frame = format!("File: -- | {} | ETA: --:--", self.status);
-                return;
-            }
-        }
-
         self.status = "Encoding...".to_string();
         self.encoding = true;
         self.progress = 0.0;
 
         let output_dir = self.output_dir.as_ref().unwrap().clone();
+        let base_name = self.get_output_base_name();
 
         let mut max_frame = 0;
         if let Ok(entries) = std::fs::read_dir(&output_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                    if file_name.starts_with("video") && file_name.ends_with(".png") {
+                    if file_name.starts_with(&base_name) && file_name.ends_with(".png") {
                         let num_str = file_name
-                            .trim_start_matches("video")
+                            .trim_start_matches(&base_name)
+                            .trim_start_matches('-')
                             .trim_end_matches(".png");
                         if let Ok(num) = num_str.parse::<u32>() {
                             if num > max_frame {
@@ -247,7 +231,7 @@ impl DeliveryEncoderApp {
             }
         }
 
-        let first_file = format!("video{:04}.png", max_frame);
+        let first_file = format!("{}-{:04}.png", base_name, max_frame);
         self.current_frame = format!("File: {} | Starting FFmpeg | ETA: --:--", first_file);
 
         let (progress_sender, progress_receiver) = std::sync::mpsc::channel();
@@ -263,6 +247,7 @@ impl DeliveryEncoderApp {
             ffprobe_path: self.ffprobe_path.clone(),
             resolution: self.resolution,
             frame_rate_option: self.frame_rate_option,
+            output_base_name: base_name,
         };
 
         let frame_sender = progress_sender.clone();
@@ -287,10 +272,11 @@ impl DeliveryEncoderApp {
         if delete_frames {
             if let Some(output_dir) = &self.output_dir {
                 if let Ok(entries) = std::fs::read_dir(output_dir) {
+                    let base_name = self.get_output_base_name();
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                            if file_name.starts_with("video") && file_name.ends_with(".png")
+                            if file_name.starts_with(&base_name) && file_name.ends_with(".png")
                             {
                                 let _ = std::fs::remove_file(&path);
                             }
@@ -347,8 +333,9 @@ impl eframe::App for DeliveryEncoderApp {
 
         ctx.set_style(style);
 
+        let base_name = self.get_output_base_name();
         while let Ok((progress, frame, message)) = self.progress_receiver.try_recv() {
-            let file_name = format!("video{:04}.png", frame);
+            let file_name = format!("{}-{:04}.png", base_name, frame);
             let full_message = format!("File: {} | {}", file_name, message);
 
             if progress < 0.0 {
@@ -456,8 +443,17 @@ impl eframe::App for DeliveryEncoderApp {
                         }
                     }
                     match &self.output_dir {
-                        Some(path) => ui.label(path.display().to_string()),
-                        None => ui.label("Not selected"),
+                        Some(path) => {
+                            ui.horizontal(|ui| {
+                                ui.label(path.display().to_string());
+                                if let Some(gb) = self.estimated_size_gb {
+                                    ui.label(format!("(Est: {:.2} GB)", gb));
+                                }
+                            });
+                        }
+                        None => {
+                            ui.label("Not selected");
+                        }
                     }
                 });
 

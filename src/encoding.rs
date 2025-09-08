@@ -22,6 +22,7 @@ pub struct EncodingConfig {
     pub ffprobe_path: PathBuf,
     pub resolution: Resolution,
     pub frame_rate_option: FrameRateOption,
+    pub output_base_name: String,
 }
 
 pub fn run_encoding(
@@ -41,7 +42,7 @@ pub fn run_encoding(
 
     let total_frames = (duration * frame_rate).ceil() as u32;
 
-    let output_pattern = "video%04d.png";
+    let output_pattern = format!("{}-%04d.png", config.output_base_name);
     let output_path = config.output_dir.join(output_pattern);
 
     let mut max_frame = 0;
@@ -50,9 +51,10 @@ pub fn run_encoding(
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                if file_name.starts_with("video") && file_name.ends_with(".png") {
+                if file_name.starts_with(&config.output_base_name) && file_name.ends_with(".png") {
                     let num_str = file_name
-                        .trim_start_matches("video")
+                        .trim_start_matches(&config.output_base_name)
+                        .trim_start_matches('-')
                         .trim_end_matches(".png");
                     if let Ok(num) = num_str.parse::<u32>() {
                         if num > max_frame {
